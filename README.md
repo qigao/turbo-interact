@@ -8,20 +8,24 @@ TurboInteract is a headless-first C11-oriented application-composition and devic
 
 ## Runtime architecture
 
-```text
- User workflow (optional Praktor DAG) / App Pack
-                     |
-       TurboSCXML: control statecharts
-          /          |          \
-         v           v           v
- TurboMedia     Turbo-Flow      Action Owner
- StreamGraph    DataGraph       (HID / Accessibility)
-      |             ^                 |
- Decode/FrameStore |                 v
- Vision Providers -+             Device Agent
-      ^                               |
-      +------ Android / media --------+
+```mermaid
+flowchart LR
+    APP["App Pack / Reusable Workflow"] --> PLAN["ApplicationPlan Composer"]
+    PLAN --> CTRL["TurboSCXML Control Plane"]
+    PLAN --> MEDIA["TurboMedia StreamGraph<br/>Sources / Decode / FrameStore / Vision"]
+    PLAN --> DATA["Turbo-Flow DataGraph<br/>Facts / Rules / Decisions"]
+    MEDIA -->|ObservationEvent| BR["GraphBridge<br/>FrameRef + bounded credit"]
+    BR -->|typed facts| DATA
+    DATA -->|DecisionEvent| CTRL
+    CTRL -->|AnalysisRequest| BR
+    BR -->|correlated request| MEDIA
+    CTRL -->|SubmitAction| ACTION["Action Owner"]
+    ACTION -->|authorized input| DEVICE["Android Agent"]
+    ACTION -->|ActionReceipt| CTRL
+    DEVICE -->|new screen frames| MEDIA
 ```
+
+See **[complete architecture diagrams](docs/architecture/DIAGRAMS.md)** for the detailed three-plane layout, FrameRef/pin ownership sequence, Action verification loop, SCXML Supervisor and App Pack compilation.
 
 - **TurboMedia StreamGraph**: media Source/Node/Sink, decode/filter, frame memory ownership, bounded fan-out, CPU/GPU memory domains, and optional vision processors. A general `StreamGraph v2` is a required upstream workstream.
 - **Turbo-Flow**: typed Observation/Fact events, pure transformations, filtering, routing, keyed aggregations and explicit decision outputs. It never owns raw GPU frames or Android input state.
@@ -36,6 +40,7 @@ TurboInteract owns the application plan composer, App Pack resolver, GraphBridge
 
 ## Architecture and delivery
 
+- [Rendered architecture diagrams (Mermaid)](docs/architecture/DIAGRAMS.md)
 - [Detailed architecture](docs/architecture/ARCHITECTURE.md)
 - [Contracts and lifecycle](docs/architecture/CONTRACTS.md)
 - [Delivery plan and acceptance gates](docs/architecture/ROADMAP.md)
