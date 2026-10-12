@@ -165,6 +165,10 @@ static ti_status validate_providers(const ti_application_spec_v1 *spec,
                                     const ti_binding_catalog_v1 *cat) {
     uint32_t i, j;
     int found = 0;
+    const uint32_t valid_mask = TI_ACTION_CAP_POINTER | TI_ACTION_CAP_GESTURE |
+                                TI_ACTION_CAP_UI_NODE | TI_ACTION_CAP_SYSTEM;
+    if (!cat->required_action_capabilities ||
+        (cat->required_action_capabilities & ~valid_mask)) return TI_EINVAL;
     for (i = 0u; i < cat->provider_count; i++) {
         const ti_action_provider_desc_v1 *p = &cat->providers[i];
         ti_status rc = valid_abi(p->size, p->version, sizeof(*p));
@@ -178,7 +182,8 @@ static ti_status validate_providers(const ti_application_spec_v1 *spec,
         if (p->provider_id == spec->action_provider_id) {
             found = 1;
             if (!p->authorized) return TI_EAUTH;
-            if (!p->capabilities) return TI_EUNSUPPORTED;
+            if ((p->capabilities & cat->required_action_capabilities) !=
+                cat->required_action_capabilities) return TI_EUNSUPPORTED;
         }
     }
     return found ? TI_OK : TI_EUNSUPPORTED;
@@ -191,6 +196,7 @@ ti_status ti_application_bindings_validate(const ti_application_spec_v1 *spec,
     if (!cat) return TI_EINVAL;
     rc = valid_abi(cat->size, cat->version, sizeof(*cat));
     if (rc != TI_OK) return rc;
+    if (cat->reserved) return TI_EINVAL;
     if (!cat->port_count || cat->port_count > TI_MAX_BOUND_PORTS ||
         !cat->link_count || cat->link_count > TI_MAX_BOUND_LINKS ||
         !cat->model_count || cat->model_count > TI_MAX_BOUND_MODELS ||
@@ -225,8 +231,24 @@ ti_status ti_application_plan_compile_bound(const ti_application_spec_v1 *spec,
     memcpy(plan->links, cat->links, cat->link_count * sizeof(*plan->links));
     plan->port_count = cat->port_count;
     plan->link_count = cat->link_count;
+    plan->required_action_capabilities = cat->required_action_capabilities;
+    for (uint32_t i = 0; i < cat->provider_count; i++) {
+        if (cat->providers[i].provider_id == spec->action_provider_id) {
+            plan->provider_action_capabilities = cat->providers[i].capabilities;
+            break;
+        }
+    }
     plan->bound = 1;
     *out = plan;
+    return TI_OK;
+}
+
+ti_status ti_application_plan_action_capabilities(const ti_application_plan *plan,
+                                                  uint32_t *required, uint32_t *available) {
+    if (!plan || !required || !available) return TI_EINVAL;
+    if (!plan->bound) return TI_EUNSUPPORTED;
+    *required = plan->required_action_capabilities;
+    *available = plan->provider_action_capabilities;
     return TI_OK;
 }
 
