@@ -1,5 +1,7 @@
 # TurboInteract
 
+[![Mermaid diagrams](https://github.com/qigao/turbo-interact/actions/workflows/mermaid.yml/badge.svg)](https://github.com/qigao/turbo-interact/actions/workflows/mermaid.yml)
+
 **Perception-driven interaction and automation built on TurboMedia StreamGraph, Turbo-Flow and TurboSCXML.**
 
 TurboInteract is a headless-first C11-oriented application-composition and device-interaction framework. It connects continuous media processing, typed observation/data processing, event-driven control statecharts and authorized device actions. **It does not introduce a third graph scheduler or a replacement media engine.**
