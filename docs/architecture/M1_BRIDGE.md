@@ -4,7 +4,7 @@
 
 ## 1. Event ownership
 
-The bridge accepts only copied, pointer-free \`ti_bridge_event_v1\` values containing the event header and optionally a \`FrameRef\`. Any event that claims nonzero \`payload_bytes\` returns \`TI_EUNSUPPORTED\`: arbitrary owned observation/event payload transfer is **not yet implemented**.
+The base `ti_bridge_prepare()` delivers only a pointer-free header and FrameRef. Nonzero payloads require opt-in `ti_bridge_create_with_payload_limits()` and `ti_bridge_prepare_owned()`; this deep-copies owned serialized bytes before commit, with per-message and aggregate admission caps. Actual codec/schema validation remains an application-specific contract.
 
 \`\`\`text
 owner prepare(event, optional frame pin)
@@ -47,14 +47,14 @@ The Fake FrameStore fixture checks:
 - seal refuses late prepare and commit; retained prepared/ready/inflight work blocks destroy;
 - duplicate settle/discard, wrong incarnation, malformed FrameRef/Event all reject;
 - unpinned weak-reference messages never acquire store credit;
-- nonempty Event payloads fail until a true owned-payload transport is implemented.
+- Header-only prepare rejects nonempty payloads; the explicit owned payload mode verifies deep copy, budget, source-mutation independence, and failed pin-release preservation.
 
 CI must qualify Windows/Linux/macOS C11 native+installed C11/C++17 consumers and Linux ASan/UBSan. **These tests are deterministic owner-lane interleavings, not TSan proof of concurrent publication.**
 
 ## 5. Next required work
 
 1. Integrate a real TurboMedia FrameStore lease provider once StreamGraph v2 is published; do not copy FFmpeg buffers into TurboInteract.
-2. Add real bounded owned event payload schemas and model/Action result correlation IDs.
+2. Add schema-checked Observation, AnalysisResult, ActionReceipt codecs and exact correlation/fencing over the new owned-byte payload transport.
 3. Define MPSC admission/Host serial dispatcher if cross-thread producers are required; do not claim this single-owner facade is thread-safe.
 4. Add true cancellation/commit and teardown concurrency tests (ASan/TSan) plus GPU fence drain.
 5. Add GraphBridge integration with installed Turbo-Flow \`.flow\` and TurboSCXML Host Event APIs. No hidden fallback.
