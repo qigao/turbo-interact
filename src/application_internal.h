@@ -10,6 +10,8 @@ struct ti_application_plan {
     ti_graph_link_v1 *links;
     uint32_t port_count;
     uint32_t link_count;
+    uint32_t required_action_capabilities;
+    uint32_t provider_action_capabilities;
     int bound;
 };
 
