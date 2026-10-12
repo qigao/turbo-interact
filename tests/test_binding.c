@@ -110,6 +110,7 @@ static void init_fixture(fixture *f) {
     cat.links = f->links;
     cat.models = &f->model;
     cat.providers = &f->provider;
+    cat.required_action_capabilities = TI_ACTION_CAP_GESTURE;
     cat.sha256 = known_hash;
     cat.sha256_user = &f->calls;
     f->catalog = cat;
@@ -120,7 +121,7 @@ static void test_compile_and_snapshot(void) {
     ti_application_plan *plan = NULL;
     ti_graph_port_v1 p = TI_GRAPH_PORT_V1_INIT;
     ti_graph_link_v1 link = TI_GRAPH_LINK_V1_INIT;
-    uint32_t pc = 0u, lc = 0u;
+    uint32_t pc = 0u, lc = 0u, required = 0u, available = 0u;
     init_fixture(&f);
     assert(ti_application_bindings_validate(&f.spec, &f.catalog) == TI_OK);
     assert(f.calls == 1u);
@@ -131,6 +132,8 @@ static void test_compile_and_snapshot(void) {
     memset(&f.model, 0, sizeof(f.model));
     assert(ti_application_plan_binding_counts(plan, &pc, &lc) == TI_OK);
     assert(pc == 4u && lc == 2u);
+    assert(ti_application_plan_action_capabilities(plan, &required, &available) == TI_OK);
+    assert(required == TI_ACTION_CAP_GESTURE && available == TI_ACTION_CAP_GESTURE);
     assert(ti_application_plan_bound_port(plan, 0u, &p) == TI_OK);
     assert(strcmp(p.port_id, "vision.out") == 0);
     assert(ti_application_plan_bound_link(plan, 1u, &link) == TI_OK);
@@ -152,6 +155,9 @@ static void test_rejections(void) {
     assert(ti_application_bindings_validate(&f.spec, &f.catalog) == TI_EAUTH);
     assert(f.calls == 0u);
     f.provider.authorized = 1u;
+    f.catalog.required_action_capabilities = TI_ACTION_CAP_POINTER;
+    assert(ti_application_bindings_validate(&f.spec, &f.catalog) == TI_EUNSUPPORTED);
+    f.catalog.required_action_capabilities = TI_ACTION_CAP_GESTURE;
 
     f.model.expected_sha256[0] ^= 1u;
     assert(ti_application_bindings_validate(&f.spec, &f.catalog) == TI_ECONFLICT);
