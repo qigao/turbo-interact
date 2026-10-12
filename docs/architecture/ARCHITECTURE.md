@@ -12,23 +12,23 @@ TurboInteract is a headless-first perception-to-action system for Android first,
 
 ## 2. Dependency and authority map
 
-```text
-Praktor (optional catalog/DAG of bounded user tasks)
-                       |
-App Pack + ApplicationPlan Composer (TurboInteract)
-                       |
-              TurboSCXML Session(s)
-   Device Supervisor    |   Application/Task Statecharts
-        typed control commands / events
-            /          |           \
-           v           v            v
-TurboMedia StreamGraph  Turbo-Flow    Action Owner
-source/decoder/frames   facts/rules   HID/Accessibility
-Vision Providers        aggregations  device effects
-      |                     ^             |
-  FrameStore ---- GraphBridge ------------+ (receipts/events)
-      ^                                     |
-      +----------- Android agents <---------+
+See the [architecture diagram collection](DIAGRAMS.md) for control/data/media ownership, FrameStore pin transfer, action verification and startup/drain sequencing.
+
+```mermaid
+flowchart LR
+    APP["App Pack / Reusable Workflow"] --> PLAN["ApplicationPlan Composer"]
+    PLAN --> CTRL["TurboSCXML Control Plane"]
+    PLAN --> MEDIA["TurboMedia StreamGraph<br/>Sources / Decode / FrameStore / Vision"]
+    PLAN --> DATA["Turbo-Flow DataGraph<br/>Facts / Rules / Decisions"]
+    MEDIA -->|ObservationEvent| BR["GraphBridge<br/>FrameRef + bounded credit"]
+    BR -->|typed facts| DATA
+    DATA -->|DecisionEvent| CTRL
+    CTRL -->|AnalysisRequest| BR
+    BR -->|correlated request| MEDIA
+    CTRL -->|SubmitAction| ACTION["Action Owner"]
+    ACTION -->|authorized input| DEVICE["Android Agent"]
+    ACTION -->|ActionReceipt| CTRL
+    DEVICE -->|new screen frames| MEDIA
 ```
 
 **Ownership is strict:**
