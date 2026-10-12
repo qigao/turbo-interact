@@ -1,0 +1,94 @@
+name: Native contract gates
+
+on:
+  pull_request:
+    paths:
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/native-contracts.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/native-contracts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: ${{ matrix.os }} C11 and installed C/C++ consumers
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cmake_generator: '-G Ninja'
+          - os: macos-latest
+            cmake_generator: '-G Ninja'
+          - os: windows-latest
+            cmake_generator: '-G "Visual Studio 17 2022" -A x64'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure project
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cmake_opts=(-G "Visual Studio 17 2022" -A x64)
+          else
+            cmake_opts=(-G Ninja)
+          fi
+          cmake -S . -B build/ci "${cmake_opts[@]}" -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
+      - name: Build project
+        shell: bash
+        run: cmake --build build/ci --config Debug --parallel 2
+      - name: Run C11 contract tests
+        shell: bash
+        run: ctest --test-dir build/ci -C Debug --output-on-failure
+      - name: Install library and headers
+        shell: bash
+        run: cmake --install build/ci --config Debug --prefix "${{ github.workspace }}/install"
+      - name: Configure installed SDK consumers
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cmake_opts=(-G "Visual Studio 17 2022" -A x64)
+          else
+            cmake_opts=(-G Ninja)
+          fi
+          cmake -S tests/install_consumer -B build/consumer "${cmake_opts[@]}" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install"
+      - name: Build installed C11/C++17 consumers
+        shell: bash
+        run: cmake --build build/consumer --config Debug --parallel 2
+      - name: Test installed consumers
+        shell: bash
+        run: ctest --test-dir build/consumer -C Debug --output-on-failure
+
+  sanitizers:
+    name: Linux ASan/UBSan contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure sanitized C library
+        run: >-
+          cmake -S . -B build/sanitize -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+      - name: Build and test
+        run: |
+          cmake --build build/sanitize --parallel 2
+          ctest --test-dir build/sanitize --output-on-failure
