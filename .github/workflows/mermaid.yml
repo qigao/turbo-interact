@@ -1,0 +1,42 @@
+name: Mermaid diagrams
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '**/*.md'
+      - '.github/workflows/mermaid.yml'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - '.github/workflows/mermaid.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Parse all Mermaid diagrams
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate fenced Mermaid diagrams
+        id: mermaid
+        uses: sgerrand/mermaid-validation-action@31f8eed257dbbbadad3332c83694866903e92b0e # v0.2.0
+        with:
+          files: |
+            README.md
+            docs/**/*.md
+          fail-on-warning: 'true'
+          comment-on-pr: 'false'
+      - name: Require documented diagram coverage
+        env:
+          DIAGRAM_COUNT: ${{ steps.mermaid.outputs.block-count }}
+        run: |
+          echo "Validated ${DIAGRAM_COUNT} Mermaid diagrams"
+          if [ "${DIAGRAM_COUNT}" -lt 7 ]; then
+            echo "::error::Expected at least 7 Mermaid diagrams (README, architecture, and five detailed diagrams)"
+            exit 1
+          fi
