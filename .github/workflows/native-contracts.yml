@@ -33,13 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            cmake_generator: '-G Ninja'
-          - os: macos-latest
-            cmake_generator: '-G Ninja'
-          - os: windows-latest
-            cmake_generator: '-G "Visual Studio 17 2022" -A x64'
+        os: [ubuntu-latest, macos-latest, windows-2022]
     steps:
       - uses: actions/checkout@v4
       - name: Configure project

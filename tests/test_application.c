@@ -1,4 +1,7 @@
 #include "turbo_interact/application.h"
+#ifdef NDEBUG
+#undef NDEBUG /* Test invariants must run in Release too. */
+#endif
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
