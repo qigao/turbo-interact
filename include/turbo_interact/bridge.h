@@ -60,6 +60,10 @@ TI_API ti_status ti_bridge_commit(ti_bridge *bridge, ti_bridge_ticket_v1 ticket)
 TI_API ti_status ti_bridge_discard(ti_bridge *bridge, ti_bridge_ticket_v1 ticket);
 TI_API ti_status ti_bridge_take(ti_bridge *bridge, ti_bridge_ticket_v1 *out_ticket,
                                 ti_bridge_event_v1 *out_event);
+/* Borrow a FrameStore lookup token after take. NOT an extra pin credit;
+ * it expires at settlement and cannot be retained as ownership. */
+TI_API ti_status ti_bridge_borrow_pin_token(ti_bridge *bridge, ti_bridge_ticket_v1 ticket,
+                                            uint64_t *out_token);
 TI_API ti_status ti_bridge_settle(ti_bridge *bridge, ti_bridge_ticket_v1 ticket);
 TI_API ti_status ti_bridge_seal(ti_bridge *bridge);
 TI_API ti_status ti_bridge_snapshot(const ti_bridge *bridge, ti_bridge_snapshot_v1 *out);
