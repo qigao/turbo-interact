@@ -8,6 +8,7 @@
 #include <string.h>
 
 typedef struct {
+    uint64_t store_generation;
     uint32_t generation;
     uint32_t pins;
     uint64_t next_ticket;
@@ -19,7 +20,8 @@ typedef struct {
 static ti_status fake_reserve(void *ctx, const ti_frame_ref_v1 *ref, uint64_t *out) {
     fake_store *f = (fake_store *)ctx;
     uint32_t i;
-    if (ref->slot != 0u || ref->slot_generation != f->generation) return TI_ESTALE;
+    if (ref->store_generation != f->store_generation ||
+        ref->slot != 0u || ref->slot_generation != f->generation) return TI_ESTALE;
     for (i = 0u; i < 16u; ++i) {
         if (!f->live[i]) {
             f->live[i] = 1;
@@ -95,6 +97,7 @@ static void test_pin_ownership_and_aba(void) {
     ti_bridge_snapshot_v1 snap = TI_BRIDGE_SNAPSHOT_V1_INIT;
     uint64_t pin_token = 0u;
     store.generation = 1u;
+    store.store_generation = 2u;
     b = create(&store, 2u);
     assert(ti_bridge_prepare(b, &e, &t1) == TI_OK);
     assert(store.pins == 1u);
@@ -117,6 +120,9 @@ static void test_pin_ownership_and_aba(void) {
     store.generation = 2u;
     assert(ti_bridge_prepare(b, &e, &taking) == TI_ESTALE);
     e.frame = frame_ref(2u);
+    store.store_generation = 3u;
+    assert(ti_bridge_prepare(b, &e, &taking) == TI_ESTALE);
+    e.frame.store_generation = 3u;
     assert(ti_bridge_prepare(b, &e, &taking) == TI_OK);
     assert(ti_bridge_commit(b, t1) == TI_ESTALE);
     assert(ti_bridge_discard(b, taking) == TI_OK);
@@ -132,6 +138,7 @@ static void test_capacity_cancel_and_failed_release(void) {
     ti_bridge_event_v1 received = TI_BRIDGE_EVENT_V1_INIT;
     ti_bridge_ticket_v1 a = {0}, taken = {0}, rejected = {0};
     store.generation = 1u;
+    store.store_generation = 2u;
     b = create(&store, 1u);
     assert(ti_bridge_prepare(b, &e, &a) == TI_OK);
     assert(ti_bridge_prepare(b, &e, &rejected) == TI_EFULL);
@@ -158,6 +165,7 @@ static void test_bad_identity_and_weak_ref(void) {
     ti_bridge_event_v1 e = event(1u, 0);
     ti_bridge_ticket_v1 t = {0};
     store.generation = 1u;
+    store.store_generation = 2u;
     b = create(&store, 1u);
     assert(ti_bridge_prepare(b, &e, &t) == TI_OK);
     assert(store.pins == 0u);
@@ -182,6 +190,7 @@ static void test_seal_prepared_not_publishable(void) {
     ti_bridge_ticket_v1 t = {0};
     ti_bridge *b;
     store.generation = 1u;
+    store.store_generation = 2u;
     b = create(&store, 1u);
     assert(ti_bridge_prepare(b, &e, &t) == TI_OK);
     assert(ti_bridge_seal(b) == TI_OK);
