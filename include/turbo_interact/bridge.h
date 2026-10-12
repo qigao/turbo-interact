@@ -32,6 +32,15 @@ typedef struct ti_bridge_config_v1 {
 } ti_bridge_config_v1;
 #define TI_BRIDGE_CONFIG_V1_INIT {sizeof(ti_bridge_config_v1), TI_ABI_VERSION, 0u, 0u, 0u, NULL, NULL, NULL}
 
+/* Optional owned event payloads. Only one serialized owner lane is supported. */
+typedef struct ti_bridge_payload_limits_v1 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t max_message_bytes;
+    uint32_t max_inflight_bytes;
+} ti_bridge_payload_limits_v1;
+#define TI_BRIDGE_PAYLOAD_LIMITS_V1_INIT {sizeof(ti_bridge_payload_limits_v1), TI_ABI_VERSION, 0u, 0u}
+
 typedef struct ti_bridge_event_v1 {
     uint32_t size;
     uint32_t version;
@@ -54,14 +63,27 @@ typedef struct ti_bridge_snapshot_v1 {
 #define TI_BRIDGE_SNAPSHOT_V1_INIT {sizeof(ti_bridge_snapshot_v1), TI_ABI_VERSION, 0u, 0u, 0u, 0u, 0u}
 
 TI_API ti_status ti_bridge_create(const ti_bridge_config_v1 *config, ti_bridge **out);
+/* Opt-in: the bridge owns bounded, deep-copied serialized bytes. */
+TI_API ti_status ti_bridge_create_with_payload_limits(
+    const ti_bridge_config_v1 *config, const ti_bridge_payload_limits_v1 *limits,
+    ti_bridge **out);
 TI_API ti_status ti_bridge_prepare(ti_bridge *bridge, const ti_bridge_event_v1 *event,
                                    ti_bridge_ticket_v1 *out);
+/* Copies borrowed input before visible commit, quota held until successful
+ * discard/settle. payload_size must equal event.header.payload_bytes. */
+TI_API ti_status ti_bridge_prepare_owned(ti_bridge *bridge, const ti_bridge_event_v1 *event,
+                                         const void *payload, size_t payload_size,
+                                         ti_bridge_ticket_v1 *out);
 TI_API ti_status ti_bridge_commit(ti_bridge *bridge, ti_bridge_ticket_v1 ticket);
 TI_API ti_status ti_bridge_discard(ti_bridge *bridge, ti_bridge_ticket_v1 ticket);
 TI_API ti_status ti_bridge_take(ti_bridge *bridge, ti_bridge_ticket_v1 *out_ticket,
                                 ti_bridge_event_v1 *out_event);
 /* Borrow a FrameStore lookup token after take. NOT an extra pin credit;
  * it expires at settlement and cannot be retained as ownership. */
+/* Copies data from a TAKEN row; never returns a borrowed pointer. For
+ * a size probe pass NULL/0, which returns TI_ERANGE if payload is nonempty. */
+TI_API ti_status ti_bridge_read_payload(ti_bridge *bridge, ti_bridge_ticket_v1 ticket,
+                                       void *destination, size_t capacity, size_t *out_size);
 TI_API ti_status ti_bridge_borrow_pin_token(ti_bridge *bridge, ti_bridge_ticket_v1 ticket,
                                             uint64_t *out_token);
 TI_API ti_status ti_bridge_settle(ti_bridge *bridge, ti_bridge_ticket_v1 ticket);

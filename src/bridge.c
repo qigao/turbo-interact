@@ -16,6 +16,8 @@ typedef struct {
     uint32_t generation;
     uint64_t order;
     uint64_t pin;
+    uint8_t *payload;
+    size_t payload_size;
     ti_bridge_event_v1 event;
 } ti_bridge_row;
 
@@ -23,6 +25,9 @@ struct ti_bridge {
     ti_bridge_config_v1 config;
     ti_bridge_row *rows;
     uint64_t next_order;
+    size_t payload_inflight_bytes;
+    size_t max_message_bytes;
+    size_t max_inflight_bytes;
     int sealed;
 };
 
@@ -34,7 +39,6 @@ static ti_status validate_event(const ti_bridge_event_v1 *event) {
         event->pin_frame > 1u || (event->pin_frame && !event->has_frame)) return TI_EINVAL;
     rc = ti_event_header_validate(&event->header);
     if (rc != TI_OK) return rc;
-    if (event->header.payload_bytes) return TI_EUNSUPPORTED; /* no owned payload yet */
     if (event->has_frame) {
         rc = ti_frame_ref_validate(&event->frame);
         if (rc != TI_OK) return rc;
@@ -60,41 +64,78 @@ static ti_status retire(ti_bridge *bridge, ti_bridge_row *row) {
         if (rc != TI_OK) return rc; /* Failed release retains obligation for retry. */
     }
     row->pin = 0u;
+    /* Failed pin release retains both the row and owned payload. */
+    free(row->payload);
+    bridge->payload_inflight_bytes -= row->payload_size;
+    row->payload = NULL;
+    row->payload_size = 0u;
     row->order = 0u;
     memset(&row->event, 0, sizeof(row->event));
     row->state = TI_ROW_FREE;
     return TI_OK;
 }
 
-ti_status ti_bridge_create(const ti_bridge_config_v1 *config, ti_bridge **out) {
+static ti_status bridge_create_impl(const ti_bridge_config_v1 *config,
+                                     const ti_bridge_payload_limits_v1 *limits, ti_bridge **out) {
     ti_bridge *bridge;
     if (!out || *out != NULL || !config) return TI_EINVAL;
     if (config->version != TI_ABI_VERSION) return TI_EVERSION;
     if (config->size != sizeof(*config) || config->reserved || !config->incarnation ||
         !config->capacity || config->capacity > TI_BRIDGE_MAX_CAPACITY ||
         (!!config->pin_reserve != !!config->pin_release)) return TI_EINVAL;
+    if (limits) {
+        if (limits->version != TI_ABI_VERSION) return TI_EVERSION;
+        if (limits->size != sizeof(*limits) || !limits->max_message_bytes ||
+            limits->max_message_bytes > TI_MAX_EVENT_PAYLOAD_BYTES ||
+            limits->max_inflight_bytes < limits->max_message_bytes ||
+            limits->max_inflight_bytes > TI_MAX_EVENT_PAYLOAD_BYTES * TI_BRIDGE_MAX_CAPACITY)
+            return TI_EINVAL;
+    }
     bridge = (ti_bridge *)calloc(1u, sizeof(*bridge));
     if (!bridge) return TI_ENOMEM;
     bridge->rows = (ti_bridge_row *)calloc(config->capacity, sizeof(*bridge->rows));
     if (!bridge->rows) { free(bridge); return TI_ENOMEM; }
     bridge->config = *config;
+    if (limits) {
+        bridge->max_message_bytes = limits->max_message_bytes;
+        bridge->max_inflight_bytes = limits->max_inflight_bytes;
+    }
     bridge->next_order = 1u;
     *out = bridge;
     return TI_OK;
 }
 
-ti_status ti_bridge_prepare(ti_bridge *bridge, const ti_bridge_event_v1 *event,
-                             ti_bridge_ticket_v1 *out) {
+ti_status ti_bridge_create(const ti_bridge_config_v1 *config, ti_bridge **out) {
+    return bridge_create_impl(config, NULL, out);
+}
+
+ti_status ti_bridge_create_with_payload_limits(const ti_bridge_config_v1 *config,
+                                                const ti_bridge_payload_limits_v1 *limits,
+                                                ti_bridge **out) {
+    if (!limits) return TI_EINVAL;
+    return bridge_create_impl(config, limits, out);
+}
+
+static ti_status bridge_prepare_impl(ti_bridge *bridge, const ti_bridge_event_v1 *event,
+                                     const void *payload, size_t payload_size,
+                                     ti_bridge_ticket_v1 *out) {
     uint32_t i;
     ti_bridge_row *row = NULL;
     uint64_t pin = 0u;
+    uint8_t *owned = NULL;
     ti_status rc;
     if (!bridge || !out) return TI_EINVAL;
     memset(out, 0, sizeof(*out));
     rc = validate_event(event);
     if (rc != TI_OK) return rc;
+    if ((size_t)event->header.payload_bytes != payload_size ||
+        (!payload && payload_size) || (payload && !payload_size)) return TI_EINVAL;
+    if (payload_size && !bridge->max_message_bytes) return TI_EUNSUPPORTED;
     if (bridge->sealed) return TI_EBUSY;
-    for (i = 0u; i < bridge->config.capacity; i++) {
+    if (payload_size > bridge->max_message_bytes ||
+        payload_size > bridge->max_inflight_bytes - bridge->payload_inflight_bytes)
+        return TI_EFULL;
+    for (i = 0; i < bridge->config.capacity; i++) {
         if (bridge->rows[i].state == TI_ROW_FREE &&
             bridge->rows[i].generation != UINT32_MAX) {
             row = &bridge->rows[i];
@@ -102,20 +143,40 @@ ti_status ti_bridge_prepare(ti_bridge *bridge, const ti_bridge_event_v1 *event,
         }
     }
     if (!row) return TI_EFULL;
+    if (payload_size) {
+        owned = (uint8_t *)malloc(payload_size);
+        if (!owned) return TI_ENOMEM;
+        memcpy(owned, payload, payload_size);
+    }
     if (event->pin_frame) {
-        if (!bridge->config.pin_reserve) return TI_EUNSUPPORTED;
+        if (!bridge->config.pin_reserve) { free(owned); return TI_EUNSUPPORTED; }
         rc = bridge->config.pin_reserve(bridge->config.pin_ctx, &event->frame, &pin);
-        if (rc != TI_OK) return rc;
-        if (!pin) return TI_ECONFLICT;
+        if (rc != TI_OK) { free(owned); return rc; }
+        if (!pin) { free(owned); return TI_ECONFLICT; }
     }
     row->generation++;
     row->event = *event;
     row->pin = pin;
+    row->payload = owned;
+    row->payload_size = payload_size;
+    bridge->payload_inflight_bytes += payload_size;
     row->state = TI_ROW_PREPARED;
     out->incarnation = bridge->config.incarnation;
     out->slot = i;
     out->generation = row->generation;
     return TI_OK;
+}
+
+ti_status ti_bridge_prepare(ti_bridge *bridge, const ti_bridge_event_v1 *event,
+                             ti_bridge_ticket_v1 *out) {
+    if (event && event->header.payload_bytes) return TI_EUNSUPPORTED;
+    return bridge_prepare_impl(bridge, event, NULL, 0u, out);
+}
+
+ti_status ti_bridge_prepare_owned(ti_bridge *bridge, const ti_bridge_event_v1 *event,
+                                   const void *payload, size_t payload_size,
+                                   ti_bridge_ticket_v1 *out) {
+    return bridge_prepare_impl(bridge, event, payload, payload_size, out);
 }
 
 ti_status ti_bridge_commit(ti_bridge *bridge, ti_bridge_ticket_v1 ticket) {
@@ -156,6 +217,21 @@ ti_status ti_bridge_take(ti_bridge *bridge, ti_bridge_ticket_v1 *out_ticket,
     out_ticket->incarnation = bridge->config.incarnation;
     out_ticket->slot = found;
     out_ticket->generation = bridge->rows[found].generation;
+    return TI_OK;
+}
+
+ti_status ti_bridge_read_payload(ti_bridge *bridge, ti_bridge_ticket_v1 ticket,
+                                  void *destination, size_t capacity, size_t *out_size) {
+    ti_bridge_row *row;
+    if (!bridge || !out_size || (!destination && capacity)) return TI_EINVAL;
+    *out_size = 0u;
+    row = resolve(bridge, ticket);
+    if (!row) return TI_ESTALE;
+    if (row->state != TI_ROW_TAKEN) return TI_ECONFLICT;
+    *out_size = row->payload_size;
+    if (capacity < row->payload_size) return TI_ERANGE;
+    if (row->payload_size && !destination) return TI_EINVAL;
+    if (row->payload_size) memcpy(destination, row->payload, row->payload_size);
     return TI_OK;
 }
 
