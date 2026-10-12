@@ -34,6 +34,7 @@ static ti_status validate_event(const ti_bridge_event_v1 *event) {
         event->pin_frame > 1u || (event->pin_frame && !event->has_frame)) return TI_EINVAL;
     rc = ti_event_header_validate(&event->header);
     if (rc != TI_OK) return rc;
+    if (event->header.payload_bytes) return TI_EUNSUPPORTED; /* no owned payload yet */
     if (event->has_frame) {
         rc = ti_frame_ref_validate(&event->frame);
         if (rc != TI_OK) return rc;
@@ -121,6 +122,7 @@ ti_status ti_bridge_commit(ti_bridge *bridge, ti_bridge_ticket_v1 ticket) {
     ti_bridge_row *row = resolve(bridge, ticket);
     if (!row) return TI_ESTALE;
     if (row->state != TI_ROW_PREPARED) return TI_ECONFLICT;
+    if (bridge->sealed) return TI_EBUSY;
     if (bridge->next_order == UINT64_MAX) return TI_ERANGE;
     row->order = bridge->next_order++;
     row->state = TI_ROW_READY;
@@ -154,6 +156,19 @@ ti_status ti_bridge_take(ti_bridge *bridge, ti_bridge_ticket_v1 *out_ticket,
     out_ticket->incarnation = bridge->config.incarnation;
     out_ticket->slot = found;
     out_ticket->generation = bridge->rows[found].generation;
+    return TI_OK;
+}
+
+ti_status ti_bridge_borrow_pin_token(ti_bridge *bridge, ti_bridge_ticket_v1 ticket,
+                                     uint64_t *out_token) {
+    ti_bridge_row *row;
+    if (!bridge || !out_token) return TI_EINVAL;
+    *out_token = 0u;
+    row = resolve(bridge, ticket);
+    if (!row) return TI_ESTALE;
+    if (row->state != TI_ROW_TAKEN) return TI_ECONFLICT;
+    if (!row->pin) return TI_EUNSUPPORTED;
+    *out_token = row->pin;
     return TI_OK;
 }
 
