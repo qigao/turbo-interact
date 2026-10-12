@@ -176,10 +176,28 @@ static void test_bad_identity_and_weak_ref(void) {
     assert(ti_bridge_destroy(b) == TI_OK);
 }
 
+static void test_seal_prepared_not_publishable(void) {
+    fake_store store = {0};
+    ti_bridge_event_v1 e = event(1u, 1);
+    ti_bridge_ticket_v1 t = {0};
+    ti_bridge *b;
+    store.generation = 1u;
+    b = create(&store, 1u);
+    assert(ti_bridge_prepare(b, &e, &t) == TI_OK);
+    assert(ti_bridge_seal(b) == TI_OK);
+    assert(ti_bridge_commit(b, t) == TI_EBUSY);
+    assert(store.pins == 1u);
+    assert(ti_bridge_destroy(b) == TI_EBUSY);
+    assert(ti_bridge_discard(b, t) == TI_OK);
+    assert(store.pins == 0u);
+    assert(ti_bridge_destroy(b) == TI_OK);
+}
+
 int main(void) {
     test_pin_ownership_and_aba();
     test_capacity_cancel_and_failed_release();
     test_bad_identity_and_weak_ref();
+    test_seal_prepared_not_publishable();
     puts("bridge credit tests passed");
     return 0;
 }
