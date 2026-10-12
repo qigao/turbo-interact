@@ -1,5 +1,6 @@
 #include <turbo_interact/application.h>
 #include <turbo_interact/binding.h>
+#include <turbo_interact/bridge.h>
 #include <turbo_interact/domain.h>
 #include <type_traits>
 
