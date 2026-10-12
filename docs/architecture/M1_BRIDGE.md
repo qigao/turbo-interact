@@ -60,3 +60,7 @@ CI must qualify Windows/Linux/macOS C11 native+installed C11/C++17 consumers and
 5. Add GraphBridge integration with installed Turbo-Flow \`.flow\` and TurboSCXML Host Event APIs. No hidden fallback.
 
 Track upstream prerequisites in [#4](https://github.com/qigao/turbo-interact/issues/4) and bridge runtime qualification in [#3](https://github.com/qigao/turbo-interact/issues/3).
+
+## 6. Owned event payload admission (additive slice)
+
+The new `ti_bridge_create_with_payload_limits()` explicitly enables bounded, bridge-owned copies of serialized event content. Producers use `ti_bridge_prepare_owned()`, then `commit`; consumers retrieve a copy through `ti_bridge_read_payload()` only after `take`. Producer storage can be released after prepare. Inflight bytes are charged until discard/settle succeeds, including when a pin-release failure delays settlement. The pre-existing `ti_bridge_create()` and `prepare()` still reject nonzero payloads. This is transport ownership only, not schema-specific decoding, a concurrent MPSC implementation, or a production TurboMedia FrameStore. See the executable owned-observation test and installed C11/C++17 consumers.
