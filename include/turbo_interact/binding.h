@@ -96,9 +96,11 @@ typedef struct ti_binding_catalog_v1 {
     const ti_action_provider_desc_v1 *providers;
     ti_sha256_callback sha256;
     void *sha256_user;
+    uint32_t required_action_capabilities; /* from trusted plan compiler */
+    uint32_t reserved;
 } ti_binding_catalog_v1;
 
-#define TI_BINDING_CATALOG_V1_INIT {sizeof(ti_binding_catalog_v1), TI_ABI_VERSION, 0u, 0u, 0u, 0u, NULL, NULL, NULL, NULL, NULL, NULL}
+#define TI_BINDING_CATALOG_V1_INIT {sizeof(ti_binding_catalog_v1), TI_ABI_VERSION, 0u, 0u, 0u, 0u, NULL, NULL, NULL, NULL, NULL, NULL, 0u, 0u}
 
 /* Provider callback rejection => TI_EUNSUPPORTED; mismatched model bytes or
  * schema => TI_ECONFLICT. Does not authenticate the caller/catalog. */
@@ -114,6 +116,8 @@ TI_API ti_status ti_application_plan_bound_port(const ti_application_plan *plan,
                                                 uint32_t index, ti_graph_port_v1 *out);
 TI_API ti_status ti_application_plan_bound_link(const ti_application_plan *plan,
                                                 uint32_t index, ti_graph_link_v1 *out);
+TI_API ti_status ti_application_plan_action_capabilities(const ti_application_plan *plan,
+                                                      uint32_t *required, uint32_t *available);
 TI_API ti_status ti_application_plan_binding_counts(const ti_application_plan *plan,
                                                     uint32_t *port_count,
                                                     uint32_t *link_count);
