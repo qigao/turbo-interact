@@ -93,6 +93,7 @@ static void test_pin_ownership_and_aba(void) {
     ti_bridge_event_v1 received = TI_BRIDGE_EVENT_V1_INIT;
     ti_bridge_ticket_v1 t1 = {0}, t2 = {0}, taking = {0};
     ti_bridge_snapshot_v1 snap = TI_BRIDGE_SNAPSHOT_V1_INIT;
+    uint64_t pin_token = 0u;
     store.generation = 1u;
     b = create(&store, 2u);
     assert(ti_bridge_prepare(b, &e, &t1) == TI_OK);
@@ -103,7 +104,10 @@ static void test_pin_ownership_and_aba(void) {
     assert(ti_bridge_commit(b, t2) == TI_OK);
     assert(ti_bridge_take(b, &taking, &received) == TI_OK);
     assert(taking.slot == t1.slot && received.frame.slot_generation == 1u);
+    assert(ti_bridge_borrow_pin_token(b, taking, &pin_token) == TI_OK && pin_token);
+    assert(ti_bridge_borrow_pin_token(b, t2, &pin_token) == TI_ECONFLICT);
     assert(ti_bridge_settle(b, taking) == TI_OK);
+    assert(ti_bridge_borrow_pin_token(b, taking, &pin_token) == TI_ESTALE);
     assert(store.pins == 1u);
     assert(ti_bridge_settle(b, taking) == TI_ESTALE);
     assert(ti_bridge_take(b, &taking, &received) == TI_OK);
@@ -162,6 +166,9 @@ static void test_bad_identity_and_weak_ref(void) {
     t.incarnation ^= 1u;
     assert(ti_bridge_discard(b, t) == TI_OK);
     assert(ti_bridge_discard(b, t) == TI_ESTALE);
+    e.header.payload_bytes = 1u;
+    assert(ti_bridge_prepare(b, &e, &t) == TI_EUNSUPPORTED);
+    e.header.payload_bytes = 0u;
     e.pin_frame = 1u;
     e.has_frame = 0u;
     assert(ti_bridge_prepare(b, &e, &t) == TI_EINVAL);
