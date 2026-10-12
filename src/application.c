@@ -6,7 +6,7 @@
 
 struct ti_application_plan {
     ti_application_info_v1 info;
-    ti_target_binding_v1 targets[];
+    ti_target_binding_v1 *targets; /* plan-owned immutable array */
 };
 
 static int ti_name_valid(const char text[TI_NAME_CAPACITY]) {
@@ -71,13 +71,17 @@ ti_status ti_application_plan_compile(const ti_application_spec_v1 *spec,
                                        ti_application_plan **out) {
     ti_application_plan *plan;
     ti_status status;
-    size_t storage;
     if (!out || *out != NULL) return TI_EINVAL;
     status = ti_application_spec_validate(spec);
     if (status != TI_OK) return status;
-    storage = sizeof(*plan) + (size_t)spec->target_count * sizeof(spec->targets[0]);
-    plan = (ti_application_plan *)calloc(1u, storage);
+    plan = (ti_application_plan *)calloc(1u, sizeof(*plan));
     if (!plan) return TI_ENOMEM;
+    plan->targets = (ti_target_binding_v1 *)calloc((size_t)spec->target_count,
+                                                  sizeof(*plan->targets));
+    if (!plan->targets) {
+        free(plan);
+        return TI_ENOMEM;
+    }
     plan->info.size = sizeof(plan->info);
     plan->info.version = TI_ABI_VERSION;
     memcpy(plan->info.application_id, spec->application_id, TI_NAME_CAPACITY);
@@ -128,5 +132,7 @@ ti_status ti_application_plan_find_target(const ti_application_plan *plan,
 }
 
 void ti_application_plan_destroy(ti_application_plan *plan) {
+    if (!plan) return;
+    free(plan->targets);
     free(plan);
 }
