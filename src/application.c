@@ -1,13 +1,9 @@
+#include "application_internal.h"
 #include "turbo_interact/application.h"
 
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-
-struct ti_application_plan {
-    ti_application_info_v1 info;
-    ti_target_binding_v1 *targets; /* plan-owned immutable array */
-};
 
 static int ti_name_valid(const char text[TI_NAME_CAPACITY]) {
     size_t i;
@@ -134,5 +130,7 @@ ti_status ti_application_plan_find_target(const ti_application_plan *plan,
 void ti_application_plan_destroy(ti_application_plan *plan) {
     if (!plan) return;
     free(plan->targets);
+    free(plan->ports);
+    free(plan->links);
     free(plan);
 }
