@@ -8,8 +8,9 @@ import android.os.Process
 
 /** Requests that the IME belongs to the virtual display, not the user main display. */
 object AndroidShellImePolicy {
-    fun requestLocal(displayId: Int): Boolean = try {
+    fun requestLocal(displayId: Int): Boolean {
         if (Process.myUid() != 2000 || displayId <= 0) return false
+        return try {
         val wm = Class.forName("android.view.WindowManagerGlobal")
             .getMethod("getWindowManagerService").invoke(null) ?: return false
         wm.javaClass.getMethod("setDisplayImePolicy", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
@@ -19,5 +20,6 @@ object AndroidShellImePolicy {
         false
     } catch (_: SecurityException) {
         false
+    }
     }
 }
