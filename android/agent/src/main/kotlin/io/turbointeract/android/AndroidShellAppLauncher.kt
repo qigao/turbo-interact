@@ -77,8 +77,9 @@ class AndroidShellTaskGateway : ShellTaskGateway {
             ?: error("ActivityTaskManager unavailable")
     }
 
-    override fun snapshot(): List<DisplayTaskInfo>? = try {
+    override fun snapshot(): List<DisplayTaskInfo>? {
         if (Process.myUid() != SHELL_UID) return null
+        return try {
         val listMethods = taskManager.javaClass.methods.filter { it.name == "getTasks" }
         val withDisplay = listMethods.firstOrNull { it.parameterTypes.size == 4 }
         val raw = (if (withDisplay != null) {
@@ -101,9 +102,11 @@ class AndroidShellTaskGateway : ShellTaskGateway {
     } catch (_: SecurityException) {
         null
     }
+    }
 
-    override fun start(intent: Intent, displayId: Int): Boolean = try {
+    override fun start(intent: Intent, displayId: Int): Boolean {
         if (Process.myUid() != SHELL_UID || displayId <= 0) return false
+        return try {
         val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle()
         val method = taskManager.javaClass.methods.firstOrNull {
             it.name == "startActivityAsUser" && it.parameterTypes.size == 12
@@ -117,6 +120,7 @@ class AndroidShellTaskGateway : ShellTaskGateway {
         false
     } catch (_: SecurityException) {
         false
+    }
     }
 
     private companion object {
