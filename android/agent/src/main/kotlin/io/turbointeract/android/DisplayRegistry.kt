@@ -1,6 +1,6 @@
 package io.turbointeract.android
 
-/** Platform-independent identity contract. An Android display ID alone is never an authority. */
+/** A numeric Android display ID is scoped to one connection, never an authorization token. */
 data class DisplayRef(
     val deviceSessionId: Long,
     val sessionGeneration: Long,
@@ -9,7 +9,6 @@ data class DisplayRef(
     val geometryGeneration: Long,
 )
 
-/** Display-space geometry, not encoded-video geometry. */
 data class DisplayGeometry(val width: Int, val height: Int, val densityDpi: Int, val rotationQuarterTurns: Int = 0) {
     init {
         require(width > 0 && height > 0 && densityDpi > 0) { "invalid display geometry" }
@@ -20,9 +19,9 @@ data class DisplayGeometry(val width: Int, val height: Int, val densityDpi: Int,
 data class DisplaySnapshot(val ref: DisplayRef, val geometry: DisplayGeometry)
 
 /**
- * Serializes identity changes. It does not own VirtualDisplay or InputManager objects.
- * This registry is deliberately incapable of registering display 0 (the user's main screen).
- * A different shell/device connection must construct a new registry generation.
+ * One registry per authenticated device session. The owner, not an untrusted
+ * request, is responsible for attach/detach. Display 0 is never registered.
+ * All operations are synchronized, including generation checks.
  */
 class DisplayRegistry(val deviceSessionId: Long, val sessionGeneration: Long) {
     init {
@@ -41,12 +40,16 @@ class DisplayRegistry(val deviceSessionId: Long, val sessionGeneration: Long) {
         DisplaySnapshot(ref, geometry).also { live[displayId] = it }
     }
 
+    /** Strict validity for actions using coordinates from a particular screenshot. */
     fun current(ref: DisplayRef): DisplaySnapshot? = synchronized(monitor) {
-        if (ref.deviceSessionId != deviceSessionId || ref.sessionGeneration != sessionGeneration || ref.displayId <= 0) null
-        else live[ref.displayId]?.takeIf { it.ref == ref }
+        live[ref.displayId]?.takeIf { it.ref == ref && inSession(ref) }
     }
 
-    /** Any resize, rotation or density change invalidates previously observed coordinates. */
+    /** Resource ownership survives geometry changes but never display-ID ABA/reconnection. */
+    fun ownsInstance(ref: DisplayRef): Boolean = synchronized(monitor) {
+        inSession(ref) && live[ref.displayId]?.ref?.displayGeneration == ref.displayGeneration
+    }
+
     fun updateGeometry(ref: DisplayRef, geometry: DisplayGeometry): DisplaySnapshot? = synchronized(monitor) {
         if (current(ref) == null) return@synchronized null
         check(ref.geometryGeneration < Long.MAX_VALUE) { "geometry generation exhausted" }
@@ -54,12 +57,24 @@ class DisplayRegistry(val deviceSessionId: Long, val sessionGeneration: Long) {
             .also { live[ref.displayId] = it }
     }
 
+    /** Strict release when the caller is also using the current geometry ref. */
     fun detach(ref: DisplayRef): Boolean = synchronized(monitor) {
-        if (current(ref) == null) false
-        else { live.remove(ref.displayId); true }
+        if (current(ref) == null) false else { live.remove(ref.displayId); true }
+    }
+
+    /**
+     * Display owner's teardown: retain lifetime identity and ignore stale geometry.
+     * A reused display ID with a different display generation can never be detached.
+     */
+    fun detachInstance(ref: DisplayRef): Boolean = synchronized(monitor) {
+        if (!ownsInstance(ref)) false else { live.remove(ref.displayId); true }
     }
 
     fun drain(): List<DisplaySnapshot> = synchronized(monitor) {
         live.values.toList().also { live.clear() }
     }
+
+    private fun inSession(ref: DisplayRef): Boolean =
+        ref.displayId > 0 && ref.deviceSessionId == deviceSessionId &&
+            ref.sessionGeneration == sessionGeneration && ref.displayGeneration > 0
 }
