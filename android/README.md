@@ -1,33 +1,45 @@
-# TurboInteract Android VirtualDisplay agent
+# TurboInteract Android interactive VirtualDisplay agent
 
-This is a **production Android library module in progress**, extracted from the pinned [Mika source import](../third_party/mika/README.md). It is not an installer, a standalone consumer project or a replacement application. The C11 host/Action Owner interface will be integrated after M0 binding is qualified.
+**Draft implementation, not qualified on a physical Android device.** Based on [Mika pinned import](../third_party/mika/README.md) (Apache-2.0) and scrcpy's MediaCodec InputSurface model. This is a **production Android library**, not an installer or a consumer/probe test app.
 
-## What's implemented in source on this branch
+## Code ownership
 
-| Component | Purpose | Status |
+| Source | Owner and behavior | Status |
 | --- | --- | --- |
-| `DisplayRegistry` | Explicit session identity, Android display ID, display/geometry generations; denies main display | Pure Kotlin compile + local smoke pass; JUnit source added |
-| `AndroidVirtualDisplayOwner` | Android 14+ shell-only VirtualDisplay flags, local IME setup requirement, owner release | Source extracted; Android build/device test pending |
-| `AndroidRgbaCapture` | ImageReader latest RGBA frame and bounded sampling | Source extracted; Android build/device test pending |
-| `AndroidSdkInput` | Explicit display-bound MotionEvent/KeyEvent with an injected deny-by-default Action Owner approval hook | Source extracted; Android build/device test pending |
+| `DisplayRegistry` | Session-scoped DisplayRef, numeric ID reuse, geometry generation; display 0 always invalid | JVM test and actual Android library compile |
+| `AndroidVirtualDisplayOwner` | Android 14+ shell VirtualDisplay + OWN_FOCUS + anti-focus-steal flags; local IME request and exact release; 2-display budget | SDK source compiled, no real-device proof |
+| `AndroidRgbaCapture` | ImageReader RGBA latest-frame sampling with copied Bitmap and local capture sequence | SDK compiled; on-device rendering unverified |
+| `AndroidH264Capture` | Hardware MediaCodec InputSurface encoder, copied H.264 buffers, bounded packet queue and explicit FAIL on full queue | SDK compilation pending at current HEAD; no transport/protocol yet |
+| `AndroidSdkInput` | Display-owner + admission guard, double replay prevention, touch and limited BACK/ENTER; no implicit main/ADB fallback | SDK compiled, no real device |
+| `AndroidShellAppLauncher` | Activity launch on Display N, main-screen/other-display App conflict and attempt replay refusal | SDK compiled, actual task behavior pending |
+| `AndroidShellContext` | UID 2000 shell package attribution/ActivityThread context | SDK compilation pending at current HEAD; no bootstrap yet |
+| `ITurboDisplayShell.aidl` + `AuthenticatedDisplayShell` | Narrow Binder surface, caller-UID checks and explicit `ShellAdmission` on external effects | SDK compiled; **handshake/Binder delivery not integrated** |
 
-Reference: [Mika upstream pinned commit](https://github.com/wangzan101/Mika/commit/279a5cae405ac83106b47af9c2794ebfa3333a57), Apache-2.0; derivatives retain upstream attribution.
+## Build and test
 
-## Dependency and privilege contract
+From `android/`, using Android SDK platform 36, JDK 17 and Gradle 8.11.1:
 
-- `android/agent` is an Android library (AGP 8.7.3 / Kotlin 2.1.20 / compileSdk 36 / minSdk 30), not an APK. Its Android 14+ DisplayOwner requires an **externally authenticated shell-context DisplayManager**. No helper process, permission or ADB setup is implicit.
-- `AndroidVirtualDisplayOwner` deliberately requires local IME policy to be confirmed by an injected shell-authorized callback. It fails if Android 14 focus isolation, display creation or IME isolation cannot be achieved; it never silently switches to main-display mirroring.
-- Only `DisplayRegistry` is qualified with the local Kotlin compiler; **no Android SDK, real shell helper, Gradle build or device is available in this run**, so compilation/integration of the Android classes and their runtime behavior is unverified.
-- `AndroidSdkInput` verifies `DisplayRef` and consults `InputApproval`. The actual authoritative Action Owner, Binder caller-UID checks, capabilities and revocation gates remain [#7](https://github.com/qigao/turbo-interact/issues/7) / [#13](https://github.com/qigao/turbo-interact/issues/13); this skeleton must not be deployed with a permissive verifier.
-- `SENT` is an injection-level result, not an App postcondition. `UNKNOWN` must not be auto-replayed. Capture `sequence` is not yet an action-correlated display composition barrier.
-- Captured `Bitmap` is owned by the caller after `latestFrame()`; release display first, then capture, then helper resources. No raw frame pointer crosses the device/host boundary.
+```sh
+gradle --no-daemon :agent:assembleDebug :agent:testDebugUnitTest
+```
 
-## Required next code gates
+CI: [Android device library](../.github/workflows/android-agent.yml). It compiles the actual product library and runs JUnit tests for display generation, attempt replay, and launch policy. It does **not** install an APK, start an `app_process` helper or fake device integration.
 
-1. Build the real Android library using an Android SDK/Gradle toolchain; fix actual platform/API issues. No CI green is claimed.
-2. Extract authenticated shell bootstrap/Binder and a restricted display/launch API from Mika. Deny main screen and duplicate App usage; validate shell caller UID.
-3. Bind DisplayRef + AccessAgent node identities to C11 ActionIntent and capture with one owner, no fallback input backend.
-4. Validate physical device with Settings: create Display N, start Activity on N, fetch pixels, inject input into N, verify unchanged main-screen focus/task and terminal ownership.
-5. Add optional MediaCodec CaptureSession/Surface rebind referencing scrcpy, then TurboMedia transport and capture-ordering proof; do not pretend ImageReader is a full video stream.
+## Security and functional limits
 
-Tracking: [#16](https://github.com/qigao/turbo-interact/issues/16).
+1. `AuthenticatedDisplayShell` has no default allow-all authority and rejects unknown Binder caller UIDs. Its construction requires shell UID 2000, but the **Mika-derived nonce/certificate-pinned ContentProvider handoff is not yet ported**. The Binder is not available to a host app until that explicit bootstrap is implemented and tested.
+2. No globally callable shell command executor, clipboard modifier, unlocking, app move/kill or audio AppOps are exposed. Resource teardown is allowed with a matching display incarnation even after grant revocation.
+3. This release path is intentionally Android 14+ for strong focus isolation. Android 12–13 capabilities are separately pending, never silently promoted.
+4. `DisplaySession` (actual Android display lifetime) and `CaptureSession` (ImageReader or MediaCodec Surface lifetime) are separate. `replaceSurface()` can rebind without destroying the App task; ownership and codec reset on real devices remain untested.
+5. `SENT` means a local input backend reported successful dispatch, **not** the user-visible postcondition. Encoded PTS and local RGBA frame counters do not prove post-input capture causality. The capture barrier and C11 Action Owner binding remain pending.
+6. Capture consumers may not retain a borrowed codec buffer. H.264 packets are owned byte copies, with bounded credit and explicit error on capacity exhaustion; no silent output drop.
+7. Permission changes, OS/API incompatibility, shell-helper process death, input on display 0, resize/geometry changes, multiple App tasks and IME isolation all require physical-device conformance before merging.
+
+## Next implementation gates
+
+- Finish trusted app `app_process` bootstrap, nonce + pinned signature, Binder handoff, process death cleanup, scoped grants.
+- Bind the existing C11 ActionIntent/ActionReceipt M0 PR #9 semantics and Action Owner #7 without another statechart.
+- Device proof: virtual display N → Settings launch → ImageReader/MediaCodec captures → targeted click → **new** frame evidence → unchanged user main display.
+- Verify 2 displays, rotation and geometry ABA, stop/drain, device lost, secure content, Android 14/15/16 OEMs.
+
+Tracking [Issue #16](https://github.com/qigao/turbo-interact/issues/16) and [Draft PR #17](https://github.com/qigao/turbo-interact/pull/17).
