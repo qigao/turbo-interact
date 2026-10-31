@@ -1,28 +1,33 @@
-# TurboInteract Android VirtualDisplay refactor
+# TurboInteract Android VirtualDisplay agent
 
-**State:** source import complete; runtime/device acceptance pending. Production Android interfaces under `android/agent/` shall be built only when Android toolchain and device tests are available.
+This is a **production Android library module in progress**, extracted from the pinned [Mika source import](../third_party/mika/README.md). It is not an installer, a standalone consumer project or a replacement application. The C11 host/Action Owner interface will be integrated after M0 binding is qualified.
 
-## Boundaries
+## What's implemented in source on this branch
 
-| Role | Owner | Imported reference |
+| Component | Purpose | Status |
 | --- | --- | --- |
-| `DisplaySession` | Android shell DisplayOwner | `ShellService.createDisplay`, `setLaunchDisplayId`, `displayFlags` |
-| `CaptureSession` | Android frame/surface owner (later TurboMedia) | `AgentDisplay` |
-| `InputBackend` | Android shell agent **after** Action Owner admission | `ShellService.inject*`, `ScreenAccessibility.gesture` |
-| `AccessibilityProvider` | explicitly user-approved Accessibility service | `ScreenReader`, `AndroidScreen` |
-| `DeviceSession` | C11 TurboInteract host | binding to DisplayRef and external grants |
+| `DisplayRegistry` | Explicit session identity, Android display ID, display/geometry generations; denies main display | Pure Kotlin compile + local smoke pass; JUnit source added |
+| `AndroidVirtualDisplayOwner` | Android 14+ shell-only VirtualDisplay flags, local IME setup requirement, owner release | Source extracted; Android build/device test pending |
+| `AndroidRgbaCapture` | ImageReader latest RGBA frame and bounded sampling | Source extracted; Android build/device test pending |
+| `AndroidSdkInput` | Explicit display-bound MotionEvent/KeyEvent with an injected deny-by-default Action Owner approval hook | Source extracted; Android build/device test pending |
 
-## Rules
+Reference: [Mika upstream pinned commit](https://github.com/wangzan101/Mika/commit/279a5cae405ac83106b47af9c2794ebfa3333a57), Apache-2.0; derivatives retain upstream attribution.
 
-1. Android framework/private APIs stay on Android Java/Kotlin side; all outside effects are authorized through the one TurboInteract Action Owner. No second statechart/scheduler/media codec.
-2. Distinguish physical main, mirror-only and independent interactive virtual display; only the last one is allowed under a virtual-only input grant.
-3. Keep numeric `displayId`, `device_session_id`, generation and geometry version separate. Never inject an event to display 0 as an implicit fallback.
-4. The capture `Surface` is a different lifetime from the `VirtualDisplay`; encoder or ImageReader restart must not silently terminate the App task.
-5. Keep screen-local IME and focus isolation as requested capabilities. Android 12/13 and OEM behavior is explicitly not assumed.
-6. Cached image frames and codec PTS alone are insufficient for a causal post-action observation. Return `UNKNOWN` when a stronger proof cannot be established.
-7. Abort or revoke the input session safely, keeping pointer DOWN/UP ownership and uncertain terminal outcomes; actions are never auto replayed.
-8. Verify on a real Android device **without** new installer/consumer projects or probe-only CI.
+## Dependency and privilege contract
 
-First gate: one display N, launch Settings, obtain frame, click on N and verify main-screen task/focus unaffected; then two displays and rotation.
+- `android/agent` is an Android library (AGP 8.7.3 / Kotlin 2.1.20 / compileSdk 36 / minSdk 30), not an APK. Its Android 14+ DisplayOwner requires an **externally authenticated shell-context DisplayManager**. No helper process, permission or ADB setup is implicit.
+- `AndroidVirtualDisplayOwner` deliberately requires local IME policy to be confirmed by an injected shell-authorized callback. It fails if Android 14 focus isolation, display creation or IME isolation cannot be achieved; it never silently switches to main-display mirroring.
+- Only `DisplayRegistry` is qualified with the local Kotlin compiler; **no Android SDK, real shell helper, Gradle build or device is available in this run**, so compilation/integration of the Android classes and their runtime behavior is unverified.
+- `AndroidSdkInput` verifies `DisplayRef` and consults `InputApproval`. The actual authoritative Action Owner, Binder caller-UID checks, capabilities and revocation gates remain [#7](https://github.com/qigao/turbo-interact/issues/7) / [#13](https://github.com/qigao/turbo-interact/issues/13); this skeleton must not be deployed with a permissive verifier.
+- `SENT` is an injection-level result, not an App postcondition. `UNKNOWN` must not be auto-replayed. Capture `sequence` is not yet an action-correlated display composition barrier.
+- Captured `Bitmap` is owned by the caller after `latestFrame()`; release display first, then capture, then helper resources. No raw frame pointer crosses the device/host boundary.
 
-Upstream: [Mika exact import](../../third_party/mika/README.md) · [#16](https://github.com/qigao/turbo-interact/issues/16).
+## Required next code gates
+
+1. Build the real Android library using an Android SDK/Gradle toolchain; fix actual platform/API issues. No CI green is claimed.
+2. Extract authenticated shell bootstrap/Binder and a restricted display/launch API from Mika. Deny main screen and duplicate App usage; validate shell caller UID.
+3. Bind DisplayRef + AccessAgent node identities to C11 ActionIntent and capture with one owner, no fallback input backend.
+4. Validate physical device with Settings: create Display N, start Activity on N, fetch pixels, inject input into N, verify unchanged main-screen focus/task and terminal ownership.
+5. Add optional MediaCodec CaptureSession/Surface rebind referencing scrcpy, then TurboMedia transport and capture-ordering proof; do not pretend ImageReader is a full video stream.
+
+Tracking: [#16](https://github.com/qigao/turbo-interact/issues/16).
