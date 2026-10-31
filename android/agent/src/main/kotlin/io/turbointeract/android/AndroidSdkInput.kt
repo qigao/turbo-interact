@@ -12,9 +12,8 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 
-/** This shell-side approval is not a replacement for the C11 Action Owner. */
+/** The authoritative, live host Action Owner must approve every independent attempt. */
 fun interface InputApproval {
-    /** Called per attempt and must reject missing, revoked, or expired host authority. */
     fun approved(intent: InputIntent): Boolean
 }
 
@@ -30,18 +29,24 @@ data class InputIntent(
 enum class InputDispatch { REJECTED, SENT, UNKNOWN }
 
 /**
- * Shell-only input path. No ADB command fallback; never inject on display 0.
- * SENT means Android accepted and processed the events at injection level,
- * not that the target app actually completed its intended action.
- * The host Action Owner must serialize conflicting pointer ownership.
+ * Shell-only targeted input. Real ownership and host authority are mandatory.
+ * UNKNOWN is never automatically retried, even when the first event returned false.
+ * SENT is only a backend-input result, never a business postcondition.
  */
-class AndroidSdkInput(private val registry: DisplayRegistry, private val approval: InputApproval) {
+class AndroidSdkInput(
+    private val registry: DisplayRegistry,
+    private val owner: AndroidVirtualDisplayOwner,
+    private val approval: InputApproval,
+    private val ledger: InputAttemptLedger = InputAttemptLedger(),
+) {
     private val inputLock = Any()
 
     fun tap(intent: InputIntent, x: Int, y: Int): InputDispatch = synchronized(inputLock) {
         if (intent.kind != InputIntent.Kind.TAP || !admit(intent)) return@synchronized InputDispatch.REJECTED
         val geometry = registry.current(intent.display)?.geometry ?: return@synchronized InputDispatch.REJECTED
         if (x !in 0 until geometry.width || y !in 0 until geometry.height) return@synchronized InputDispatch.REJECTED
+        if (!claim(intent)) return@synchronized InputDispatch.REJECTED
+
         val now = SystemClock.uptimeMillis()
         val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat(), 0)
         val up = MotionEvent.obtain(now, now + 50L, MotionEvent.ACTION_UP, x.toFloat(), y.toFloat(), 0)
@@ -49,7 +54,19 @@ class AndroidSdkInput(private val registry: DisplayRegistry, private val approva
             down.source = InputDevice.SOURCE_TOUCHSCREEN
             up.source = InputDevice.SOURCE_TOUCHSCREEN
             if (!inject(down, intent.display.displayId)) return@synchronized InputDispatch.UNKNOWN
-            if (inject(up, intent.display.displayId)) InputDispatch.SENT else InputDispatch.UNKNOWN
+            SystemClock.sleep(50L)
+            if (inject(up, intent.display.displayId)) InputDispatch.SENT else {
+                // Best-effort pointer recovery; outcome is still UNKNOWN.
+                val cancel = MotionEvent.obtain(now, SystemClock.uptimeMillis(),
+                    MotionEvent.ACTION_CANCEL, x.toFloat(), y.toFloat(), 0)
+                try {
+                    cancel.source = InputDevice.SOURCE_TOUCHSCREEN
+                    inject(cancel, intent.display.displayId)
+                } finally {
+                    cancel.recycle()
+                }
+                InputDispatch.UNKNOWN
+            }
         } finally {
             down.recycle()
             up.recycle()
@@ -62,7 +79,7 @@ class AndroidSdkInput(private val registry: DisplayRegistry, private val approva
             InputIntent.Kind.ENTER -> KeyEvent.KEYCODE_ENTER
             else -> return@synchronized InputDispatch.REJECTED
         }
-        if (!admit(intent)) return@synchronized InputDispatch.REJECTED
+        if (!admit(intent) || !claim(intent)) return@synchronized InputDispatch.REJECTED
         val now = SystemClock.uptimeMillis()
         val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, 0,
             KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD)
@@ -72,21 +89,28 @@ class AndroidSdkInput(private val registry: DisplayRegistry, private val approva
         else InputDispatch.UNKNOWN
     }
 
-    private fun admit(intent: InputIntent): Boolean =
-        intent.actionId > 0 && intent.attemptId > 0 && intent.display.displayId > 0 &&
-            registry.current(intent.display) != null && approval.approved(intent) &&
-            registry.current(intent.display) != null
+    private fun admit(intent: InputIntent): Boolean {
+        if (intent.display.displayId <= 0 || registry.current(intent.display) == null || !owner.current(intent.display)) {
+            return false
+        }
+        if (intent.actionId <= 0 || intent.attemptId <= 0) return false
+        val authorized = try { approval.approved(intent) } catch (_: Exception) { false }
+        return authorized && owner.current(intent.display)
+    }
+
+    private fun claim(intent: InputIntent): Boolean =
+        ledger.claim(InputAttemptKey.from(intent.display, intent.actionId, intent.attemptId))
 
     private fun inject(event: InputEvent, displayId: Int): Boolean = try {
-        InputEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType)
-            .invoke(event, displayId)
+        // Never omit the display ID or fall back to ADB 'input' on the main screen.
+        InputEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType).invoke(event, displayId)
         val manager = runCatching {
             Class.forName("android.hardware.input.InputManagerGlobal")
                 .getMethod("getInstance").invoke(null)
         }.getOrNull() ?: Class.forName("android.hardware.input.InputManager")
             .getMethod("getInstance").invoke(null)
         manager.javaClass.getMethod("injectInputEvent", InputEvent::class.java, Int::class.javaPrimitiveType)
-            .invoke(manager, event, 2) as Boolean // WAIT_FOR_FINISH, not business-success proof.
+            .invoke(manager, event, 2) as Boolean // WAIT_FOR_FINISH, not App success.
     } catch (_: ReflectiveOperationException) {
         false
     } catch (_: SecurityException) {
