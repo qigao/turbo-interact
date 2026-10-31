@@ -28,6 +28,11 @@ class AndroidVirtualDisplayOwner(
     fun create(surface: Surface, geometry: DisplayGeometry): DisplaySnapshot = synchronized(monitor) {
         check(Build.VERSION.SDK_INT >= 34) { "background-focus isolation requires Android 14+" }
         check(geometry.rotationQuarterTurns == 0) { "rotation requires a separate geometry update" }
+        require(geometry.width in 1..4096 && geometry.height in 1..4096 &&
+            geometry.width.toLong() * geometry.height.toLong() <= 8_388_608L) {
+            "virtual display pixel budget exceeded"
+        }
+        check(displays.size < MAX_ACTIVE_DISPLAYS) { "virtual display capacity exceeded" }
         val vd = displayManager.createVirtualDisplay(
             "turbo-interact-agent", geometry.width, geometry.height, geometry.densityDpi, surface, DISPLAY_FLAGS
         ) ?: error("VirtualDisplay creation returned null")
@@ -89,6 +94,7 @@ class AndroidVirtualDisplayOwner(
     }
 
     private companion object {
+        const val MAX_ACTIVE_DISPLAYS = 2
         // Hidden flags from Mika's Android 14+ shell-only implementation.
         const val OWN_CONTENT_ONLY = 1 shl 3
         const val SUPPORTS_TOUCH = 1 shl 6

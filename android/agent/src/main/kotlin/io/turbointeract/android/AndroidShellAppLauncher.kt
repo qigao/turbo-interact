@@ -42,6 +42,7 @@ class AndroidShellAppLauncher(
     private val approval: LaunchApproval,
 ) {
     private val monitor = Any()
+    private val attempts = InputAttemptLedger(2048)
 
     fun launch(ref: DisplayRef, packageName: String, actionId: Long): LaunchOutcome = synchronized(monitor) {
         if (actionId <= 0 || !owner.current(ref) || registry.current(ref) == null) {
@@ -58,10 +59,13 @@ class AndroidShellAppLauncher(
             LaunchVerdict.ALLOWED -> Unit
         }
 
-        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-            ?: return@synchronized LaunchOutcome.NOT_FOUND
+        val intent = try { context.packageManager.getLaunchIntentForPackage(packageName) }
+            catch (_: Exception) { null } ?: return@synchronized LaunchOutcome.NOT_FOUND
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (!owner.current(ref)) return@synchronized LaunchOutcome.STALE_DISPLAY
+        if (!attempts.claim(InputAttemptKey.from(ref, actionId, actionId))) {
+            return@synchronized LaunchOutcome.DENIED // Same launch attempt is never replayed.
+        }
         val submitted = try { tasks.start(intent, ref.displayId) } catch (_: Exception) { false }
         if (submitted) LaunchOutcome.SUBMITTED else LaunchOutcome.UNKNOWN
     }
