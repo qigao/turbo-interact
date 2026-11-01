@@ -195,8 +195,9 @@ class AndroidH264Capture(
      */
     private fun emit(bytes: ByteArray, ptsUs: Long, config: Boolean,
                      key: Boolean, eos: Boolean): Boolean = synchronized(monitor) {
-        if (state != State.RUNNING || ptsUs < 0 || (config && key) ||
-            (config && eos) || (bytes.isEmpty() && !eos)) {
+        val rows = H264CaptureLineageGate.outputRows(
+            bytes.size, config, key, eos)
+        if (state != State.RUNNING || ptsUs < 0 || rows == 0) {
             fail("invalid_encoder_output")
             return@synchronized false
         }
@@ -204,7 +205,7 @@ class AndroidH264Capture(
             fail("non_annexb")
             return@synchronized false
         }
-        val pending = if (eos && bytes.isNotEmpty())
+        val pending = if (rows == 2)
             listOf(Pending(bytes, ptsUs, false, key, false),
                 Pending(ByteArray(0), ptsUs, false, false, true))
         else listOf(Pending(bytes, ptsUs, config, key, eos))

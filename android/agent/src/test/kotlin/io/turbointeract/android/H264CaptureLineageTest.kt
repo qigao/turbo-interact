@@ -45,6 +45,22 @@ class H264CaptureLineageTest {
             0x1234L, 0x5678L, 1L, 4L, stamp))
     }
 
+    @Test fun zeroByteEosIsAnActualTerminalRowAndPayloadEosNeedsTwoSlots() {
+        assertTrue(H264CaptureLineageGate.outputRows(4, true, false, false) == 1)
+        assertTrue(H264CaptureLineageGate.outputRows(256, false, true, false) == 1)
+        assertTrue(H264CaptureLineageGate.outputRows(0, false, false, true) == 1)
+        assertTrue(H264CaptureLineageGate.outputRows(64, false, false, true) == 2)
+        assertTrue(H264CaptureLineageGate.outputRows(0, false, false, false) == 0)
+        assertTrue(H264CaptureLineageGate.outputRows(4, true, true, false) == 0)
+        assertTrue(H264CaptureLineageGate.outputRows(4, true, false, true) == 0)
+    }
+
+    @Test fun i420BudgetRejectedBeforeAllocatingCodecOrVirtualDisplay() {
+        assertTrue(H264CaptureLineageGate.fitsI420FrameStore(1920, 1080))
+        assertFalse(H264CaptureLineageGate.fitsI420FrameStore(4096, 2048))
+        assertFalse(H264CaptureLineageGate.fitsI420FrameStore(1919, 1080))
+    }
+
     @Test fun packetSequenceAndTimestampsHaveExplicitConstraints() {
         for (bad in listOf(
             { stamp.copy(packetSequence=0L) },

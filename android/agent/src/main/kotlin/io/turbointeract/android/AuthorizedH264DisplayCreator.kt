@@ -20,6 +20,10 @@ object AuthorizedH264DisplayCreator {
     ): DisplaySnapshot {
         require(geometry.width == capture.width && geometry.height == capture.height)
         require(geometry.rotationQuarterTurns == 0)
+        require(H264CaptureLineageGate.fitsI420FrameStore(
+            capture.width, capture.height)) {
+            "selected TurboMedia CPU FrameStore cannot retain decoded I420 frame"
+        }
         // Never restart a prior codec instance or reuse old capture UUID/
         // stream epoch after display geometry changes.
         val surface = capture.start()
