@@ -15,6 +15,8 @@ android {
     }
     ndkVersion '27.2.12479018'
     defaultConfig {
+        // Product AAR R8 metadata: preserve JNI-exported names after host shrink.
+        consumerProguardFiles 'jni-keep.pro'
         externalNativeBuild {
             cmake {
                 targets 'turbo_interact_android_jni'

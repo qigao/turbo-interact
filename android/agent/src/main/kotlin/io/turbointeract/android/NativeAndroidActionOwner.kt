@@ -90,7 +90,8 @@ internal class NativeActionPeer(
     } catch (_: Exception) { false }
 
     @Suppress("unused") // JNI validates the exact return shape and display identity
-    fun geometry(values: LongArray): Long = try {
+    fun geometry(values: LongArray): Long {
+        return try {
         if (values.size != 17 || values[0] != 1L || values[9] !in 1..Int.MAX_VALUE.toLong()) return 0L
         val b = shell.displayGeometry(values[9].toInt(), values[10], values[11])
         if (b.getInt("status", -1) != 0) return 0L
@@ -100,21 +101,26 @@ internal class NativeActionPeer(
             width.toLong() * height.toLong() > 8_388_608L) return 0L
         (width.toLong() shl 32) or (height.toLong() and 0xffffffffL)
     } catch (_: Exception) { 0L }
+    }
 
     @Suppress("unused") // JNI dispatch callback, no permission cache
-    fun tap(values: LongArray): Int = try {
+    fun tap(values: LongArray): Int {
+        return try {
         if (values.size != 7 || values[0] !in 1..Int.MAX_VALUE.toLong() ||
             values[5] !in 0..Int.MAX_VALUE.toLong() ||
             values[6] !in 0..Int.MAX_VALUE.toLong()) return -2
         shell.tap(values[0].toInt(), values[1], values[2],
             values[3], values[4], values[5].toInt(), values[6].toInt())
     } catch (_: Exception) { -2 }
+    }
 
     @Suppress("unused")
-    fun key(values: LongArray): Int = try {
+    fun key(values: LongArray): Int {
+        return try {
         if (values.size != 6 || values[0] !in 1..Int.MAX_VALUE.toLong() || values[5] != 1L) return -2
         shell.key(values[0].toInt(), values[1], values[2], values[3], values[4], 1)
     } catch (_: Exception) { -2 }
+    }
 }
 
 /** Declared in the production AAR's NDK shared target, built from root C11. */

@@ -183,12 +183,17 @@ static int ti_begin_ticket(ti_native_owner *owner, uint32_t kind,
     ti_unguard(owner);
     return valid;
 }
-static void ti_end_ticket(ti_native_owner *owner) {
+/* Even a Binder-shaped SENT must be UNKNOWN unless the authenticated shell
+ * called the host reverse grant for THIS ticket exactly once. */
+static int ti_end_ticket(ti_native_owner *owner) {
+    int confirmed;
     ti_guard(owner);
+    confirmed = owner->pending && owner->consumed && !owner->revoked;
     owner->pending = 0;
     owner->consumed = 0;
     owner->proposed = 0;
     ti_unguard(owner);
+    return confirmed;
 }
 static int32_t ti_tap(void *user, int32_t display_id,
                       uint64_t display_generation, uint64_t geometry_generation,
@@ -216,8 +221,7 @@ static int32_t ti_tap(void *user, int32_t display_id,
     result = (*env)->CallIntMethod(env, owner->peer, owner->tap_method, input);
     (*env)->DeleteLocalRef(env, input);
     if (ti_clear_java_exception(env)) result = TI_ANDROID_SHELL_UNKNOWN;
-    ti_end_ticket(owner);
-    return (int32_t)result;
+    return ti_end_ticket(owner) ? (int32_t)result : TI_ANDROID_SHELL_UNKNOWN;
 }
 static int32_t ti_key(void *user, int32_t display_id,
                       uint64_t display_generation, uint64_t geometry_generation,
@@ -244,8 +248,7 @@ static int32_t ti_key(void *user, int32_t display_id,
     result = (*env)->CallIntMethod(env, owner->peer, owner->key_method, input);
     (*env)->DeleteLocalRef(env, input);
     if (ti_clear_java_exception(env)) result = TI_ANDROID_SHELL_UNKNOWN;
-    ti_end_ticket(owner);
-    return (int32_t)result;
+    return ti_end_ticket(owner) ? (int32_t)result : TI_ANDROID_SHELL_UNKNOWN;
 }
 
 JNIEXPORT jlong JNICALL
