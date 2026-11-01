@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import android.view.Surface
+import java.util.UUID
 
 /**
  * Low-frequency ImageReader capture attached to a separate owned Display.
@@ -26,12 +27,20 @@ class AndroidRgbaCapture(val width: Int, val height: Int, private val minInterva
         require(width.toLong() * height.toLong() <= 8_388_608L) { "capture budget exceeded" }
     }
 
-    data class Frame(val bitmap: Bitmap, val sequence: Long, val capturedAtNs: Long)
+    data class Frame(
+        val bitmap: Bitmap,
+        val sequence: Long,
+        val capturedAtNs: Long,
+        /** Non-authoritative lineage; null until host binds the created display. */
+        val stamp: CaptureFrameStamp? = null,
+    )
 
     private val monitor = Any()
     private val thread = HandlerThread("turbo-interact-capture").apply { start() }
     private val handler = Handler(thread.looper)
     private val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+    private val captureSessionId = UUID.randomUUID().toString()
+    private var boundDisplay: DisplayRef? = null
     @Volatile private var closed = false
     private var pending = false
     private var lastProcessedMs = 0L
@@ -39,6 +48,26 @@ class AndroidRgbaCapture(val width: Int, val height: Int, private val minInterva
     private var latest: Frame? = null
 
     val surface: Surface get() = reader.surface
+
+    /**
+     * The Surface is supplied before createDisplay; bind its exact returned
+     * DisplaySnapshot AFTER successful creation and BEFORE collecting action
+     * evidence. A rotation, Surface swap or display recreation needs a NEW
+     * capture session rather than silently reusing the old lineage.
+     */
+    fun bindDisplay(snapshot: DisplaySnapshot) {
+        require(snapshot.geometry.width == width && snapshot.geometry.height == height)
+        val ref = snapshot.ref
+        require(ref.deviceSessionId > 0 && ref.sessionGeneration > 0 &&
+            ref.displayId > 0 && ref.displayGeneration > 0 && ref.geometryGeneration > 0)
+        synchronized(monitor) {
+            check(!closed && boundDisplay == null) { "capture already bound or closed" }
+            boundDisplay = ref
+            latest?.bitmap?.recycle()
+            latest = null
+            sequence = 0L
+        }
+    }
 
     init {
         reader.setOnImageAvailableListener({ schedule() }, handler)
@@ -69,7 +98,11 @@ class AndroidRgbaCapture(val width: Int, val height: Int, private val minInterva
                         if (sequence == Long.MAX_VALUE) error("capture sequence exhausted")
                         sequence++
                         latest?.bitmap?.recycle()
-                        latest = Frame(cropped, sequence, image.timestamp)
+                        latest = Frame(cropped, sequence, image.timestamp,
+                            boundDisplay?.let { ref ->
+                                CaptureFrameStamp(ref, captureSessionId, sequence,
+                                    SystemClock.elapsedRealtimeNanos())
+                            })
                     }
                 }
             } finally {
@@ -84,7 +117,7 @@ class AndroidRgbaCapture(val width: Int, val height: Int, private val minInterva
     /** Caller owns the returned bitmap and must recycle it. Returns null after close. */
     fun latestFrame(): Frame? = synchronized(monitor) {
         if (closed) null else latest?.let {
-            Frame(it.bitmap.copy(Bitmap.Config.ARGB_8888, false), it.sequence, it.capturedAtNs)
+            Frame(it.bitmap.copy(Bitmap.Config.ARGB_8888, false), it.sequence, it.capturedAtNs, it.stamp)
         }
     }
 
