@@ -77,8 +77,9 @@ object AuthorizedShellHostConnector {
                 // a one-time nonce, and the helper Binder identity before this.
                 val shell = host.connectedShell()
                 if (shell != null) {
+                    val connection = AuthorizedShellConnection(shell, host, checkNotNull(lease))
                     established = true
-                    return AuthorizedShellConnection(shell, host, lease)
+                    return connection
                 }
                 val remainingMs = timeoutMs - elapsedMs
                 try {
