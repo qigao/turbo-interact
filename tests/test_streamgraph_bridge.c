@@ -1,4 +1,5 @@
 #include "turbo_interact/streamgraph_bridge.h"
+#include "turbo_interact/m17e_fact.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -374,9 +375,71 @@ static void test_terminal_queue_full_remains_pending(void) {
     tm_sg_program_destroy(program);
 }
 
+
+/* The canonical 160-byte TIFA fact is independent of host C11 packing,
+ * raw FrameRef and FramePin. This test runs on *all* existing native
+ * Linux/macOS/Windows/ASan product CI builds with the real Store SDK. */
+static void test_m17e_canonical_terminal_fact_codec(void) {
+    ti_m17e_terminal_fact_v1 fact=TI_M17E_TERMINAL_FACT_V1_INIT;
+    ti_m17e_terminal_fact_v1 restored=TI_M17E_TERMINAL_FACT_V1_INIT;
+    uint8_t wire[TI_M17E_TERMINAL_WIRE_BYTES]={0};
+    size_t used=0u;
+    fact.outcome=TM_PC_CANCELLED;
+    fact.completion_observed=1u;
+    fact.provider_status=-99;
+    fact.schema_id=67u;
+    fact.event_id=221u;fact.correlation=211u;
+    fact.plan_generation=19u;
+    fact.source_session_generation=77u;
+    fact.device_session_id=43u;
+    fact.device_session_generation=6u;
+    fact.display_id=7u;
+    fact.geometry_generation=5u;
+    fact.capture_session_hi=88u;fact.capture_session_lo=99u;
+    fact.stream_generation=12u;
+    fact.packet_sequence=11u;fact.provider_generation=55u;
+    fact.pts=33000u;fact.dts=33000u;
+    fact.timebase_num=1u;fact.timebase_den=1000000u;
+    assert(ti_m17e_terminal_fact_validate(&fact)==TI_OK);
+    assert(ti_m17e_terminal_fact_encode(&fact,wire,sizeof(wire)-1u,
+                                         &used)==TI_ERANGE);
+    assert(used==0u);
+    assert(ti_m17e_terminal_fact_encode(&fact,wire,sizeof(wire),
+                                         &used)==TI_OK);
+    assert(used==160u && memcmp(wire,"TIFA",4u)==0);
+    assert(wire[4]==0u && wire[5]==1u &&
+           wire[6]==0u && wire[7]==160u);
+    /* The last bytes are a schema and explicit zero reserved word. */
+    assert(wire[152]==0u && wire[155]==67u &&
+           wire[156]==0u && wire[159]==0u);
+    assert(ti_m17e_terminal_fact_decode(wire,used,&restored)==TI_OK);
+    assert(restored.outcome==TM_PC_CANCELLED &&
+           restored.provider_status==-99 &&
+           restored.correlation==211u && restored.event_id==221u &&
+           restored.device_session_id==43u &&
+           restored.capture_session_hi==88u &&
+           restored.packet_sequence==11u && restored.pts==33000u);
+    wire[76]=1u; /* no unknown future ABI bits */
+    assert(ti_m17e_terminal_fact_decode(wire,used,&restored)==TI_ECONFLICT);
+    wire[76]=0u;
+    wire[12]=0xffu; /* unknown outcome */
+    assert(ti_m17e_terminal_fact_decode(wire,used,&restored)==TI_EINVAL);
+    wire[12]=0u;
+    wire[156]=1u;
+    assert(ti_m17e_terminal_fact_decode(wire,used,&restored)==TI_ECONFLICT);
+    wire[156]=0u;
+    fact.outcome=TM_PC_COMPLETED;fact.completion_observed=0u;
+    assert(ti_m17e_terminal_fact_validate(&fact)==TI_EINVAL);
+    fact.outcome=TM_PC_START_FAILED;fact.completion_observed=1u;
+    assert(ti_m17e_terminal_fact_validate(&fact)==TI_EINVAL);
+    fact.outcome=TM_PC_CANCELLED;fact.completion_observed=1u;
+    fact.dts=33001u;
+    assert(ti_m17e_terminal_fact_validate(&fact)==TI_EINVAL);
+}
 void test_real_turbomedia_frame_store_bridge(void) {
     test_real_store_observation_and_two_pinned_requests();
     test_generation_and_unannotated_reject_before_pin();
     test_terminal_queue_full_remains_pending();
+    test_m17e_canonical_terminal_fact_codec();
     puts("real TurboMedia FrameStore / TurboInteract GraphBridge: PASS");
 }

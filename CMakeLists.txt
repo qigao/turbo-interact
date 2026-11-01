@@ -64,13 +64,49 @@ if(TI_WITH_TURBOMEDIA_STREAMGRAPH)
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/turbo_interact)
 endif()
 
+# Optional *actual* installed TurboFlow/SCXML targets, never fake stubs.
+# These SDKs currently have no independently verified public release graph
+# for M17e, so do not run their gated profile in the default CI and do not
+# claim that OFF compiles the external adapter. Missing SDK is a hard error.
+option(TI_WITH_TURBOFLOW_SCXML
+       "Use actually installed TurboFlow::Graph + TurboSCXML::SCXML SDK" OFF)
+if(TI_WITH_TURBOFLOW_SCXML)
+  if(NOT TI_WITH_TURBOMEDIA_STREAMGRAPH)
+    message(FATAL_ERROR
+      "M17e Flow/SCXML requires the actual installed StreamGraphBridge")
+  endif()
+  find_package(TurboFlow CONFIG REQUIRED COMPONENTS Graph)
+  find_package(TurboSCXML CONFIG REQUIRED)
+  if(NOT TARGET TurboFlow::Graph OR NOT TARGET TurboSCXML::SCXML)
+    message(FATAL_ERROR "M17e requires real TurboFlow/SCXML imported SDK targets")
+  endif()
+  add_library(turbo_interact_flow_scxml_bridge STATIC src/m17e_flow_scxml.c)
+  add_library(TurboInteract::FlowSCXMLBridge ALIAS
+    turbo_interact_flow_scxml_bridge)
+  set_target_properties(turbo_interact_flow_scxml_bridge PROPERTIES
+    EXPORT_NAME FlowSCXMLBridge
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  target_include_directories(turbo_interact_flow_scxml_bridge PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+  target_compile_options(turbo_interact_flow_scxml_bridge PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  target_link_libraries(turbo_interact_flow_scxml_bridge PUBLIC
+    TurboInteract::StreamGraphBridge TurboFlow::Graph TurboSCXML::SCXML)
+  install(TARGETS turbo_interact_flow_scxml_bridge
+    EXPORT TurboInteractTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  install(FILES include/turbo_interact/m17e_flow_scxml.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/turbo_interact)
+endif()
+
 install(TARGETS turbo_interact_core EXPORT TurboInteractTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/turbo_interact DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   PATTERN "streamgraph_bridge.h" EXCLUDE
-  PATTERN "m17e_fact.h" EXCLUDE)
+  PATTERN "m17e_fact.h" EXCLUDE
+  PATTERN "m17e_flow_scxml.h" EXCLUDE)
 install(EXPORT TurboInteractTargets FILE TurboInteractTargets.cmake
   NAMESPACE TurboInteract:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TurboInteract)
 configure_package_config_file(cmake/TurboInteractConfig.cmake.in
