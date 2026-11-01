@@ -250,9 +250,16 @@ static void test_owned_observation_payload(void) {
 void test_real_turbomedia_frame_store_bridge(void);
 #endif
 
+#ifdef TI_M17_H264_REAL_TEST
+void test_m17_real_codec_frame_to_turbointeract_bridge(void);
+#endif
+
 int main(void) {
 #ifdef TI_STREAMGRAPH_BRIDGE_REAL
     test_real_turbomedia_frame_store_bridge();
+#endif
+#ifdef TI_M17_H264_REAL_TEST
+    test_m17_real_codec_frame_to_turbointeract_bridge();
 #endif
     test_pin_ownership_and_aba();
     test_capacity_cancel_and_failed_release();

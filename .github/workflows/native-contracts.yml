@@ -54,6 +54,12 @@ jobs:
           target: x64
           build-type: toolchain-only
           obfuscator: 'false'
+      - name: Install actual OpenH264 only for Linux real Codec/Bridge gate
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenh264-dev
       - name: Install actual TurboMedia StreamGraph product SDK
         shell: bash
         env:
@@ -89,6 +95,13 @@ jobs:
               -DTI_WITH_TURBOMEDIA_STREAMGRAPH=ON \
               -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/turbomedia-sg-sdk"
           fi
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            # Original shipped Codec C sources are test-only inputs to the
+            # EXISTING ti_bridge_test target; no duplicate product runtime.
+            cmake -S . -B build/ci -G Ninja \
+              -DTI_TEST_M17_REAL_H264=ON \
+              -DTI_TURBOMEDIA_SOURCE_DIR="$GITHUB_WORKSPACE/upstream-turbomedia"
+          fi
       - name: Compile C11 product and contract tests
         shell: bash
         run: cmake --build build/ci --parallel 2
@@ -115,6 +128,11 @@ jobs:
           repository: qigao/turbomedia
           ref: 224973d5b133f53d7a9734f81a915bdcbf314937
           path: upstream-turbomedia
+      - name: Install real OpenH264 development dependency
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenh264-dev
       - name: Build actual instrumented StreamGraph product SDK
         shell: bash
         run: |
@@ -135,7 +153,9 @@ jobs:
             -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
             -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined' \
             -DTI_WITH_TURBOMEDIA_STREAMGRAPH=ON \
-            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/turbomedia-sg-sdk"
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/turbomedia-sg-sdk" \
+            -DTI_TEST_M17_REAL_H264=ON \
+            -DTI_TURBOMEDIA_SOURCE_DIR="$GITHUB_WORKSPACE/upstream-turbomedia"
           cmake --build build/sanitize --parallel 2
           export LD_LIBRARY_PATH="$RUNNER_TEMP/turbomedia-sg-sdk/lib:${LD_LIBRARY_PATH:-}"
           ctest --test-dir build/sanitize --output-on-failure

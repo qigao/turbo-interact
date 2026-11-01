@@ -25,6 +25,18 @@ target_compile_options(turbo_interact_core PRIVATE -Wall -Wextra -Wpedantic -Wer
 # Never build an independent frame implementation or silently fall back.
 option(TI_WITH_TURBOMEDIA_STREAMGRAPH
        "Bind real installed TurboMedia StreamGraph FrameStore to GraphBridge" OFF)
+
+# The real Android H264 product integration is exercised in the EXISTING
+# ti_bridge_test on Linux, with upstream exact source from the same pinned
+# TurboMedia checkout that supplied the installed StreamGraph library.
+# It is NOT a second shipping Codec DSO/engine or a new test project.
+option(TI_TEST_M17_REAL_H264
+       "Exercise original TurboMedia OpenH264 Codec in existing ti_bridge_test" OFF)
+if(TI_TEST_M17_REAL_H264 AND
+   (NOT TI_WITH_TURBOMEDIA_STREAMGRAPH OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux"
+    OR CMAKE_CROSSCOMPILING OR NOT TI_TURBOMEDIA_SOURCE_DIR))
+  message(FATAL_ERROR "Real H264 GraphBridge test requires Linux host and actual pinned TurboMedia source")
+endif()
 if(TI_WITH_TURBOMEDIA_STREAMGRAPH)
   find_package(TurboMediaStreamGraph CONFIG REQUIRED)
   if(NOT TARGET TurboMedia::StreamGraph)
@@ -83,6 +95,30 @@ if(BUILD_TESTING)
       TurboInteract::StreamGraphBridge)
     target_compile_definitions(ti_bridge_test PRIVATE
       TI_STREAMGRAPH_BRIDGE_REAL=1)
+    if(TI_TEST_M17_REAL_H264)
+      find_path(TI_M17_OPENH264_INCLUDE_DIR NAMES wels/codec_api.h REQUIRED)
+      find_library(TI_M17_OPENH264_LIBRARY NAMES openh264 REQUIRED)
+      foreach(_m17_upstream_file IN ITEMS
+          streamgraph/adapters/codec/src/turbo_streamgraph_h264.c
+          codec/codec_registry.c codec/g711_codec.c codec/h264_codec.c)
+        if(NOT EXISTS "${TI_TURBOMEDIA_SOURCE_DIR}/${_m17_upstream_file}")
+          message(FATAL_ERROR "Actual upstream H264 source missing: ${_m17_upstream_file}")
+        endif()
+      endforeach()
+      target_sources(ti_bridge_test PRIVATE
+        tests/test_m17_h264_bridge.c
+        ${TI_TURBOMEDIA_SOURCE_DIR}/streamgraph/adapters/codec/src/turbo_streamgraph_h264.c
+        ${TI_TURBOMEDIA_SOURCE_DIR}/codec/codec_registry.c
+        ${TI_TURBOMEDIA_SOURCE_DIR}/codec/g711_codec.c
+        ${TI_TURBOMEDIA_SOURCE_DIR}/codec/h264_codec.c)
+      target_include_directories(ti_bridge_test PRIVATE
+        ${TI_TURBOMEDIA_SOURCE_DIR}/streamgraph/adapters/codec/include
+        ${TI_TURBOMEDIA_SOURCE_DIR}/media/include
+        ${TI_M17_OPENH264_INCLUDE_DIR})
+      target_compile_definitions(ti_bridge_test PRIVATE
+        TI_M17_H264_REAL_TEST=1 TURBO_MEDIA_HAS_H264=1)
+      target_link_libraries(ti_bridge_test PRIVATE ${TI_M17_OPENH264_LIBRARY})
+    endif()
   endif()
   add_test(NAME ti_bridge_test COMMAND ti_bridge_test)
 
