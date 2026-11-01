@@ -115,6 +115,9 @@ class TurboDisplayHandoffHost private constructor(
     fun connectedShell(): ITurboDisplayShell? =
         if (revoked) null else accepted?.takeIf { it.asBinder().isBinderAlive }
 
+    /** One-way live check for an authorized host-side connection supervisor. */
+    internal fun activeForBootstrap(): Boolean = !revoked && active === this
+
     /** No retry or silent reconnection after process death. Reauthorization required. */
     private fun onShellDied(binder: IBinder) = synchronized(this) {
         if (accepted?.asBinder() === binder) {
