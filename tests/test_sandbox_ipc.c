@@ -30,8 +30,12 @@ typedef struct fixture {
 static ti_status grant(void *user, const ti_action_request_v1 *request) {
     fixture *f = (fixture *)user;
     f->grants++;
-    assert(request->origin == TI_ACTION_ORIGIN_SANDBOX);
-    return f->permit ? TI_OK : TI_EAUTH;
+    assert(request->origin == TI_ACTION_ORIGIN_SANDBOX ||
+           request->origin == TI_ACTION_ORIGIN_MODEL);
+    /* Only the sandbox needs its additional live grant; an independently
+     * admitted model call must still work after the sandbox bridge closes. */
+    return request->origin == TI_ACTION_ORIGIN_MODEL || f->permit ?
+        TI_OK : TI_EAUTH;
 }
 
 static ti_status dispatch(void *user, const ti_action_request_v1 *req,

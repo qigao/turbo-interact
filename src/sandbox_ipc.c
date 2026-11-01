@@ -21,6 +21,9 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#if defined(__APPLE__)
+#include <sys/ucred.h>
+#endif
 #include <poll.h>
 #include <unistd.h>
 #endif
@@ -171,10 +174,14 @@ static int ti_ipc_peer_uid(int fd, uint32_t *uid) {
     *uid = (uint32_t)cred.uid;
     return 1;
 #elif defined(__APPLE__)
-    uid_t euid;
-    gid_t egid;
-    if (getpeereid(fd, &euid, &egid) != 0) return 0;
-    *uid = (uint32_t)euid;
+    /* macOS has no getpeereid() with this SDK. Use the kernel-provided
+     * LOCAL_PEERCRED struct xucred; reject unknown credential versions. */
+    struct xucred cred;
+    socklen_t len = (socklen_t)sizeof(cred);
+    if (getsockopt(fd, 0, LOCAL_PEERCRED, &cred, &len) != 0 ||
+        len != sizeof(cred) || cred.cr_version != XUCRED_VERSION ||
+        cred.cr_uid == (uid_t)-1) return 0;
+    *uid = (uint32_t)cred.cr_uid;
     return 1;
 #else
     (void)fd; (void)uid;
