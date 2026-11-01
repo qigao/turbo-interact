@@ -24,7 +24,49 @@ data class TrustedSandboxCommand(
     val maxDurationMs: Long = 30_000L,
     val maxRequests: Int = 1,
     val maxOutputBytes: Int = 65_536,
-)
+) {
+    companion object {
+        /**
+         * Construct exactly the existing C11 worker's one-shot argv from a
+         * typed, already source-bound SANDBOX/SCRIPT action. The socket server
+         * independently rechecks the live C11 owner/DisplayRef, peer UID and
+         * task-scoped token; these argv values are NOT authority.
+         */
+        fun forSandboxAction(
+            action: NativeInputAction,
+            callId: Long,
+            taskId: Long,
+            sandboxRunId: Long,
+        ): TrustedSandboxCommand {
+            require(action.origin == NativeInputAction.SANDBOX ||
+                action.origin == NativeInputAction.SCRIPT)
+            require(callId > 0L && taskId > 0L && sandboxRunId > 0L)
+            val kind = when (action.kind) {
+                NativeInputAction.TAP -> "tap"
+                NativeInputAction.BACK -> "back"
+                else -> error("not a reviewed worker phone-tool action")
+            }
+            val cells = listOf(
+                callId, action.actionId, action.attemptId,
+                action.evidenceId, action.captureSequence,
+                action.display.displayGeneration,
+                action.display.geometryGeneration, action.deadlineNs
+            ).map(Long::toString)
+            val arguments = listOf(kind) + cells +
+                if (kind == "tap") listOf(
+                    action.xNormalized.toString(), action.yNormalized.toString()
+                ) else emptyList()
+            val command = TrustedSandboxCommand(
+                TrustedSandboxLaunchPolicy.WORKER_LIBRARY_NAME,
+                arguments, taskId, sandboxRunId,
+                allowedTools = if (kind == "tap") NativeAndroidActionOwner.SANDBOX_TAP
+                else NativeAndroidActionOwner.SANDBOX_BACK,
+            )
+            TrustedSandboxLaunchPolicy.validate(command)
+            return command
+        }
+    }
+}
 
 enum class SandboxProcessOutcome {
     EXITED, DEADLINE, CALL_BUDGET, OUTPUT_LIMIT, CANCELLED
