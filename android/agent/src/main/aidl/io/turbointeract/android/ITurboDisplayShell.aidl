@@ -8,6 +8,10 @@ import android.view.Surface;
  * No arbitrary shell commands, main-screen actions, audio or clipboard APIs.
  */
 interface ITurboDisplayShell {
+    // Used only during the challenge handoff to attest the actual Binder server process.
+    int[] identity();
+    // Caller-UID protected terminal close. Does not grant shell permissions.
+    void closeSession();
     // Bundle contains explicit device/session/display/geometry generations.
     Bundle createDisplay(in Surface surface, int width, int height, int densityDpi);
     // 0=submitted, negative=typed rejection/unknown; never means task succeeded.

@@ -1,1 +1,14 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Host APK receives an authenticated shell-to-app Binder handoff.
+             No host App install, ADB pairing or arbitrary shell command is included.
+             The privileged permission prevents normal third-party apps from calling it;
+             TurboDisplayHandoffProvider additionally checks UID/PID and a one-shot nonce. -->
+        <provider
+            android:name="io.turbointeract.android.TurboDisplayHandoffProvider"
+            android:authorities="${applicationId}.turbo_interact_helper"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+    </application>
+</manifest>
