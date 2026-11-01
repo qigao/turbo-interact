@@ -10,7 +10,8 @@ add_library(turbo_interact_core STATIC
   src/binding.c
   src/action_owner.c
   src/sandbox_bridge.c
-  src/sandbox_ipc.c)
+  src/sandbox_ipc.c
+  src/android_shell_backend.c)
 add_library(TurboInteract::Core ALIAS turbo_interact_core)
 set_target_properties(turbo_interact_core PROPERTIES
   EXPORT_NAME Core
@@ -62,6 +63,10 @@ if(BUILD_TESTING)
   add_executable(ti_sandbox_ipc_test tests/test_sandbox_ipc.c)
   target_link_libraries(ti_sandbox_ipc_test PRIVATE TurboInteract::Core)
   add_test(NAME ti_sandbox_ipc_test COMMAND ti_sandbox_ipc_test)
+
+  add_executable(ti_android_shell_backend_test tests/test_android_shell_backend.c)
+  target_link_libraries(ti_android_shell_backend_test PRIVATE TurboInteract::Core)
+  add_test(NAME ti_android_shell_backend_test COMMAND ti_android_shell_backend_test)
 
   add_executable(ti_application_test tests/test_application.c)
   target_link_libraries(ti_application_test PRIVATE TurboInteract::Core)
