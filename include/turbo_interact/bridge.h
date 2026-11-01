@@ -86,6 +86,11 @@ TI_API ti_status ti_bridge_read_payload(ti_bridge *bridge, ti_bridge_ticket_v1 t
                                        void *destination, size_t capacity, size_t *out_size);
 TI_API ti_status ti_bridge_borrow_pin_token(ti_bridge *bridge, ti_bridge_ticket_v1 ticket,
                                             uint64_t *out_token);
+/* Read an immutable copy of the ACTUAL TAKEN row. Does not borrow pixels,
+ * transfer the Pin, or move settlement ownership; rejects stale tickets. */
+TI_API ti_status ti_bridge_taken_event(ti_bridge *bridge, ti_bridge_ticket_v1 ticket,
+                                        ti_bridge_event_v1 *out_event);
+
 TI_API ti_status ti_bridge_settle(ti_bridge *bridge, ti_bridge_ticket_v1 ticket);
 TI_API ti_status ti_bridge_seal(ti_bridge *bridge);
 TI_API ti_status ti_bridge_snapshot(const ti_bridge *bridge, ti_bridge_snapshot_v1 *out);

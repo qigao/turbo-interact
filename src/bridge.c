@@ -248,6 +248,19 @@ ti_status ti_bridge_borrow_pin_token(ti_bridge *bridge, ti_bridge_ticket_v1 tick
     return TI_OK;
 }
 
+ti_status ti_bridge_taken_event(ti_bridge *bridge, ti_bridge_ticket_v1 ticket,
+                                  ti_bridge_event_v1 *out_event) {
+    ti_bridge_row *row;
+    if (!bridge || !out_event) return TI_EINVAL;
+    if (out_event->version != TI_ABI_VERSION) return TI_EVERSION;
+    if (out_event->size != sizeof(*out_event)) return TI_EINVAL;
+    row=resolve(bridge,ticket);
+    if (!row) return TI_ESTALE;
+    if (row->state != TI_ROW_TAKEN) return TI_ECONFLICT;
+    *out_event=row->event;
+    return TI_OK;
+}
+
 ti_status ti_bridge_settle(ti_bridge *bridge, ti_bridge_ticket_v1 ticket) {
     ti_bridge_row *row = resolve(bridge, ticket);
     if (!row) return TI_ESTALE;
