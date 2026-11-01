@@ -46,6 +46,7 @@ class AuthenticatedDisplayShell(
     }
 
     @Volatile private var closed = false
+    private val lifecycleMonitor = Any()
 
     private val registry = DisplayRegistry(deviceSessionId, sessionGeneration)
     private val displays = AndroidVirtualDisplayOwner(displayManager, registry, AndroidShellImePolicy::requestLocal)
@@ -70,9 +71,11 @@ class AuthenticatedDisplayShell(
         terminateFromHostDeath()
     }
 
-    fun terminateFromHostDeath(): Int {
+    fun terminateFromHostDeath(): Int = synchronized(lifecycleMonitor) {
+        // Prevent an admitted in-flight createDisplay from publishing a new
+        // display AFTER releaseAll has already finished.
         closed = true
-        return displays.releaseAll()
+        displays.releaseAll()
     }
 
     override fun createDisplay(surface: Surface, width: Int, height: Int, densityDpi: Int): Bundle {
@@ -82,9 +85,15 @@ class AuthenticatedDisplayShell(
             return result
         }
         val snapshot = try {
-            displays.create(surface, DisplayGeometry(width, height, densityDpi))
+            synchronized(lifecycleMonitor) {
+                if (closed) null else displays.create(surface, DisplayGeometry(width, height, densityDpi))
+            }
         } catch (_: Exception) {
             result.putInt("status", STATUS_UNKNOWN)
+            return result
+        }
+        if (snapshot == null) {
+            result.putInt("status", STATUS_DENIED)
             return result
         }
         result.putInt("status", STATUS_SUBMITTED)
