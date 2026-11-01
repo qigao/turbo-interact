@@ -97,7 +97,8 @@ object TurboDisplayShellMain {
 
     private fun signedInstalledPackage(
         context: Context, packageName: String, appUid: Int, pinnedSigner: String
-    ): Boolean = try {
+    ): Boolean {
+        return try {
         val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
         val actual = info.signingInfo?.apkContentsSigners?.map { it.toByteArray() }
             ?.takeIf { it.isNotEmpty() } ?: return false
@@ -108,6 +109,7 @@ object TurboDisplayShellMain {
             MessageDigest.isEqual(pin.toByteArray(Charsets.US_ASCII), pinnedSigner.toByteArray(Charsets.US_ASCII))
     } catch (_: Exception) {
         false
+    }
     }
 
     /**
