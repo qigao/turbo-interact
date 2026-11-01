@@ -13,6 +13,22 @@ android {
     buildFeatures {
         aidl = true
     }
+    ndkVersion '27.2.12479018'
+    defaultConfig {
+        externalNativeBuild {
+            cmake {
+                targets 'turbo_interact_android_jni'
+                arguments '-DBUILD_TESTING=OFF'
+            }
+        }
+    }
+    // Reuse the existing C11 product root CMake; no separate JNI probe target.
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
 }
 
 dependencies {

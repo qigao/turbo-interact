@@ -34,7 +34,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
       - name: Install Android compile platform
-        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Set up Gradle 9.1.0
         uses: gradle/actions/setup-gradle@v4
         with:

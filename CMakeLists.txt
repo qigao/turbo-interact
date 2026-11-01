@@ -24,6 +24,19 @@ target_include_directories(turbo_interact_core PUBLIC
 # Product C11 builds use Clang/LLVM; MSVC/GCC are not release toolchains.
 target_compile_options(turbo_interact_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
+# Android JNI is part of the production Android AAR, linked to the same
+# TurboInteract::Core C11 owner; never a separate execution engine.
+if(ANDROID)
+  set_target_properties(turbo_interact_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  add_library(turbo_interact_android_jni SHARED
+    android/agent/src/main/cpp/native_action_owner_jni.c)
+  target_link_libraries(turbo_interact_android_jni PRIVATE TurboInteract::Core)
+  set_target_properties(turbo_interact_android_jni PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  target_compile_options(turbo_interact_android_jni PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 install(TARGETS turbo_interact_core EXPORT TurboInteractTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
