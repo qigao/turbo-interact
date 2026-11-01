@@ -52,3 +52,15 @@ jobs:
       - name: Compile production library and run JVM unit tests via SimpleDSL
         working-directory: android
         run: gradle --no-daemon --stacktrace :agent:assembleDebug :agent:testDebugUnitTest
+      - name: Verify published AAR contains both native product binaries in all four ABIs
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          aar=agent/build/outputs/aar/agent-debug.aar
+          test -f "$aar"
+          contents="$(jar tf "$aar")"
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            grep -Fxq "jni/$abi/libturbo_interact_android_jni.so" <<< "$contents"
+            grep -Fxq "jni/$abi/libturbo_interact_sandbox_worker.so" <<< "$contents"
+          done
