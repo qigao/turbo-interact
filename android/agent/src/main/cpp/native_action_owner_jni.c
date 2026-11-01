@@ -263,7 +263,7 @@ Java_io_turbointeract_android_NativeActionJni_open(
         plan_generation <= 0 || device_session_id <= 0 ||
         session_generation <= 0 || display_id <= 0 ||
         display_generation <= 0 || geometry_generation <= 0 ||
-        attempt_capacity <= 0 || attempt_capacity > TI_ACTION_OWNER_MAX_ATTEMPTS)
+        attempt_capacity <= 0 || (uint32_t)attempt_capacity > TI_ACTION_OWNER_MAX_ATTEMPTS)
         return (jlong)0;
     owner = (ti_native_owner *)calloc(1u, sizeof(*owner));
     if (!owner) return (jlong)0;
