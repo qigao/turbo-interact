@@ -3,12 +3,22 @@ name: Android device library
 on:
   pull_request:
     paths:
-      - 'android/**'
+      - 'android/agent/**'
+      - 'android/dependencies.toml'
+      - 'android/settings.gradle.kts'
+      - 'CMakeLists.txt'
+      - 'include/**'
+      - 'src/**'
       - '.github/workflows/android-agent.yml'
   push:
     branches: [master]
     paths:
-      - 'android/**'
+      - 'android/agent/**'
+      - 'android/dependencies.toml'
+      - 'android/settings.gradle.kts'
+      - 'CMakeLists.txt'
+      - 'include/**'
+      - 'src/**'
       - '.github/workflows/android-agent.yml'
   workflow_dispatch:
 
