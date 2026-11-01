@@ -7,8 +7,10 @@ import org.junit.Test
 
 /** No fake device or consumer process: these are production launch-policy contracts. */
 class TrustedSandboxCommandRunnerTest {
-    private fun spec(name: String = "libreviewedworker.so") =
-        TrustedSandboxCommand(name, taskId = 10L, sandboxRunId = 3L)
+    private fun spec(name: String = TrustedSandboxLaunchPolicy.WORKER_LIBRARY_NAME) =
+        TrustedSandboxCommand(name,
+            arguments = listOf("back", "1", "2", "1", "0", "0", "3", "1", "2000000000"),
+            taskId = 10L, sandboxRunId = 3L)
 
     @Test fun allowsOnlyExplicitPackagedNativeWorkerNames() {
         TrustedSandboxLaunchPolicy.validate(spec())
@@ -29,6 +31,13 @@ class TrustedSandboxCommandRunnerTest {
             good.copy(arguments = listOf("a\u0000b")),
             good.copy(maxDurationMs = 1L),
             good.copy(maxRequests = 10_000),
+            good.copy(maxRequests = 2),
+            good.copy(arguments = listOf("tap", "1", "2", "1", "0", "0", "3", "1",
+                "2000000000", "100000", "100000")),
+            good.copy(arguments = listOf("back", "1", "2", "1", "0", "0", "3",
+                "1", "2000000000", "0")),
+            good.copy(arguments = listOf("back", "1", "2", "1", "0", "0", "3",
+                "1", "99999999999999999999999999")),
             good.copy(maxOutputBytes = 1_000_000),
             good.copy(taskId = 0L),
             good.copy(sandboxRunId = 0L),
@@ -39,6 +48,13 @@ class TrustedSandboxCommandRunnerTest {
                 throw AssertionError("accepted unbounded/unsafe launch")
             } catch (_: IllegalArgumentException) { }
         }
+    }
+
+    @Test fun auditedOneShotTapSchema() {
+        val command = spec().copy(arguments = listOf(
+            "tap", "1", "22", "1", "10", "3", "5", "1",
+            "2000000000", "100000", "900000"))
+        TrustedSandboxLaunchPolicy.validate(command)
     }
 
     @Test fun tokenGoesOnlyIntoFramedStdinAndIsRedactedInCasualLogs() {

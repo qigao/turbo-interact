@@ -21,7 +21,7 @@ data class TrustedSandboxCommand(
     val sandboxRunId: Long,
     val allowedTools: Int = NativeAndroidActionOwner.SANDBOX_TAP or NativeAndroidActionOwner.SANDBOX_BACK,
     val maxDurationMs: Long = 30_000L,
-    val maxRequests: Int = 64,
+    val maxRequests: Int = 1,
     val maxOutputBytes: Int = 65_536,
 )
 
@@ -40,22 +40,36 @@ data class SandboxProcessReceipt(
 
 /** Pure host policy, also covered by the Android AAR's JVM tests. */
 internal object TrustedSandboxLaunchPolicy {
+    const val WORKER_LIBRARY_NAME = "libturbo_interact_sandbox_worker.so"
+
     fun validate(command: TrustedSandboxCommand) {
         val name = command.nativeLibraryName
-        require(name.startsWith("lib") && name.endsWith(".so") && name.length in 7..64)
-        require(name.substring(3, name.length - 3).all { ch ->
-            ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch == '_'
-        })
+        // Only our audited one-shot binary, never the JNI library or a
+        // model-selected executable from the same nativeLibraryDir.
+        require(name == WORKER_LIBRARY_NAME)
         require(command.taskId > 0 && command.sandboxRunId > 0)
         require(command.allowedTools in 1..3)
         require(command.maxDurationMs in 100L..120_000L)
-        require(command.maxRequests in 1..4096)
+        require(command.maxRequests == 1) // One process, one IPC request.
         require(command.maxOutputBytes in 1024..262_144)
-        require(command.arguments.size <= 32)
-        require(command.arguments.sumOf { it.toByteArray(Charsets.UTF_8).size } <= 4096)
-        require(command.arguments.all { value ->
-            value.length <= 4096 && value.none { ch -> ch.code == 0 || ch.code == 10 || ch.code == 13 }
-        })
+        val args = command.arguments
+        val tap = args.firstOrNull() == "tap"
+        require(tap || args.firstOrNull() == "back")
+        require(args.size == if (tap) 11 else 9)
+        val cells = args.drop(1).map { cell ->
+            require(cell.isNotEmpty() && (cell == "0" || cell[0] != '0') &&
+                cell.all { it in '0'..'9' })
+            cell.toLongOrNull() ?: throw IllegalArgumentException("sandbox integer overflow")
+        }
+        // [callId, actionId, attemptId, observationId, captureSequence,
+        //  displayGeneration, geometryGeneration, deadlineNs, x, y]
+        require(cells[0] > 0 && cells[1] > 0 && cells[2] > 0 &&
+            cells[5] > 0 && cells[6] > 0 && cells[7] > 0)
+        if (tap) {
+            require(cells[3] > 0 && cells[4] > 0 &&
+                cells[8] in 0..1_000_000 && cells[9] in 0..1_000_000)
+        }
+        require(args.sumOf { it.toByteArray(Charsets.US_ASCII).size } <= 4096)
     }
 
     /** The child reads 3 ASCII/UTF-8 lines on stdin, never secret argv/env. */
@@ -193,7 +207,15 @@ class TrustedSandboxCommandRunner(
                 val elapsed = SystemClock.elapsedRealtime() - begun
                 if (elapsed >= command.maxDurationMs) break
                 if (accepted + rejected >= command.maxRequests) {
-                    outcome = SandboxProcessOutcome.CALL_BUDGET
+                    // One-shot worker must be allowed to read the server ACK
+                    // and terminate normally before its input budget is judged.
+                    try { process.waitFor(250L, TimeUnit.MILLISECONDS) }
+                    catch (interrupted: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        cancel()
+                    }
+                    outcome = if (process.isAlive) SandboxProcessOutcome.CALL_BUDGET
+                              else SandboxProcessOutcome.EXITED
                     break
                 }
                 val remaining = (command.maxDurationMs - elapsed).coerceAtMost(250L).toInt()
