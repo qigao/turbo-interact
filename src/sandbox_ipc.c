@@ -1,7 +1,12 @@
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE 1
 #endif
-#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#if defined(__APPLE__)
+/* Darwin extension APIs expose LOCAL_PEERCRED/xucred and real mkdtemp. */
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#elif !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L
 #endif
 
