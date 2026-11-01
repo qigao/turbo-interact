@@ -89,11 +89,13 @@ class TrustedSandboxCommandRunnerTest {
         assertEquals(2, backCmd.allowedTools)
         assertEquals(listOf("back", "31", "12", "9", "0", "0", "5", "3",
             "123456789"), backCmd.arguments)
-        try {
-            TrustedSandboxCommand.forSandboxAction(
-                tap.copy(origin = NativeInputAction.MODEL), 30, 14, 1)
-            throw AssertionError("model command improperly handed to sandbox worker")
-        } catch (_: IllegalArgumentException) { }
+        for (disallowedOrigin in listOf(NativeInputAction.MODEL, NativeInputAction.SCRIPT)) {
+            try {
+                TrustedSandboxCommand.forSandboxAction(
+                    tap.copy(origin = disallowedOrigin), 30, 14, 1)
+                throw AssertionError("wrong-origin command passed to SANDBOX-only worker")
+            } catch (_: IllegalArgumentException) { }
+        }
     }
 
     @Test fun auditedOneShotTapSchema() {
