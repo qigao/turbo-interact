@@ -66,7 +66,6 @@ class PostActionFrameEvidenceTest {
         val wrongActions = listOf(
             action.copy(display = ref.copy(geometryGeneration = 6L)),
             action.copy(captureSequence = 5L),
-            action.copy(evidenceId = 0L),
         )
         for (wrong in wrongActions) {
             try {
@@ -74,6 +73,12 @@ class PostActionFrameEvidenceTest {
                 fail("accepted mismatched action/frame evidence")
             } catch (_: IllegalArgumentException) { }
         }
+        // NativeInputAction validates TAP evidence at construction, before
+        // the separate post-action observation gate even exists.
+        try {
+            action.copy(evidenceId = 0L)
+            fail("accepted a TAP without source evidence")
+        } catch (_: IllegalArgumentException) { }
         try {
             PostActionFrameBarrier(action, before, NativeInputReceipt(0, 1, 3), 99L)
             fail("accepted a dispatch timestamp preceding the source frame")
