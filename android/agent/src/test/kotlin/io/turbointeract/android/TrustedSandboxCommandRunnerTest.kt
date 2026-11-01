@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
 
 /** No fake device or consumer process: these are production launch-policy contracts. */
 class TrustedSandboxCommandRunnerTest {
@@ -11,6 +13,28 @@ class TrustedSandboxCommandRunnerTest {
         TrustedSandboxCommand(name,
             arguments = listOf("back", "1", "2", "1", "0", "0", "3", "1", "2000000000"),
             taskId = 10L, sandboxRunId = 3L)
+
+    @Test fun installedApkMustExtractNativeWorkerBeforeExecAttempt() {
+        // AAR contents alone do not set the final embedding APK's extraction
+        // flag or establish execve. These tests do NOT create a consumer APK.
+        val extractionFlag = android.content.pm.ApplicationInfo.FLAG_EXTRACT_NATIVE_LIBS
+        assertEquals(TrustedWorkerInstallStatus.APK_DOES_NOT_EXTRACT_NATIVE_LIBS,
+            TrustedSandboxWorkerInstallation.inspect(0, "/absent"))
+        assertEquals(TrustedWorkerInstallStatus.NO_NATIVE_LIBRARY_DIRECTORY,
+            TrustedSandboxWorkerInstallation.inspect(extractionFlag, null))
+        val directory = Files.createTempDirectory("ti-installed-worker-contract").toFile()
+        try {
+            assertEquals(TrustedWorkerInstallStatus.WORKER_NOT_INSTALLED,
+                TrustedSandboxWorkerInstallation.inspect(extractionFlag, directory.absolutePath))
+            val fakeWorker = File(directory, TrustedSandboxLaunchPolicy.WORKER_LIBRARY_NAME)
+            fakeWorker.writeText("not a trusted native executable")
+            fakeWorker.setExecutable(false)
+            assertEquals(TrustedWorkerInstallStatus.WORKER_NOT_IMMUTABLE_EXECUTABLE,
+                TrustedSandboxWorkerInstallation.inspect(extractionFlag, directory.absolutePath))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
 
     @Test fun allowsOnlyExplicitPackagedNativeWorkerNames() {
         TrustedSandboxLaunchPolicy.validate(spec())
