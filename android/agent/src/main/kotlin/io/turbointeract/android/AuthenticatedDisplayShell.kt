@@ -140,6 +140,23 @@ class AuthenticatedDisplayShell(
         )))
     }
 
+    override fun displayGeometry(displayId: Int, displayGeneration: Long, geometryGeneration: Long): Bundle {
+        val result = Bundle()
+        if (closed) {
+            result.putInt("status", STATUS_DENIED)
+            return result
+        }
+        val current = displays.snapshot(ref(displayId, displayGeneration, geometryGeneration))
+        if (current == null) {
+            result.putInt("status", STATUS_DENIED)
+        } else {
+            result.putInt("status", STATUS_SUBMITTED)
+            result.putInt("width", current.geometry.width)
+            result.putInt("height", current.geometry.height)
+        }
+        return result
+    }
+
     override fun releaseDisplay(displayId: Int, displayGeneration: Long): Boolean =
         displays.release(ref(displayId, displayGeneration, 0L))
 

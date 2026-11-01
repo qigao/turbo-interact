@@ -23,6 +23,9 @@ interface ITurboDisplayShell {
     // keyKind: 1=BACK, 2=ENTER; everything else rejected.
     int key(int displayId, long displayGeneration, long geometryGeneration,
             long actionId, long attemptId, int keyKind);
+    // Read current owned geometry for exact display/geometry generation.
+    // Return status=0 with width/height only for a live owned VirtualDisplay.
+    Bundle displayGeometry(int displayId, long displayGeneration, long geometryGeneration);
     // Teardown checks display incarnation. It is allowed even after grant revocation.
     boolean releaseDisplay(int displayId, long displayGeneration);
 }

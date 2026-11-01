@@ -66,6 +66,11 @@ class AndroidVirtualDisplayOwner(
         if (!current(ref)) null else effect()
     }
 
+    /** A read-only, generation-exact geometry check for the native ActionOwner. */
+    fun snapshot(ref: DisplayRef): DisplaySnapshot? = synchronized(monitor) {
+        if (current(ref)) registry.current(ref) else null
+    }
+
     /** Encoder/ImageReader swap preserves the Android display and App task. */
     fun replaceSurface(ref: DisplayRef, surface: Surface): Boolean = synchronized(monitor) {
         if (!current(ref)) return@synchronized false

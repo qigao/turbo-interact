@@ -27,6 +27,8 @@ interface HostDisplayGrants {
     fun allowCreateDisplay(deviceSessionId: Long, sessionGeneration: Long): Boolean
     fun allowLaunch(ref: DisplayRef, packageName: String, actionId: Long): Boolean
     fun allowInput(intent: InputIntent): Boolean
+    /** Called when the authenticated shell is lost or this host session ends. */
+    fun onShellTerminated() {}
 }
 
 /**
@@ -120,6 +122,7 @@ class TurboDisplayHandoffHost private constructor(
             authorizedPid = -1
             challenge.invalidate()
             revoked = true
+            runCatching { grants.onShellTerminated() }
             synchronized(Companion) { if (active === this) active = null }
         }
     }
@@ -134,6 +137,7 @@ class TurboDisplayHandoffHost private constructor(
             accepted.also { accepted = null }
         }
         synchronized(Companion) { if (active === this) active = null }
+        runCatching { grants.onShellTerminated() }
         try { old?.closeSession() } catch (_: Exception) { /* remote may have died */ }
     }
 
