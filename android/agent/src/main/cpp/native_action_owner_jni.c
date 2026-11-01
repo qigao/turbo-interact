@@ -5,6 +5,7 @@
  */
 #include "turbo_interact/action_owner.h"
 #include "turbo_interact/android_shell_backend.h"
+#include "turbo_interact/sandbox_ipc.h"
 
 #include <jni.h>
 #include <stdint.h>
@@ -12,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <unistd.h>
 
 /*
  * Private versioned Java/JNI fields, also defined by NativeInputAction.values:
@@ -44,6 +46,11 @@ typedef struct ti_native_owner {
     jmethodID key_method;
     atomic_flag guard;
     uint32_t provider_id;
+    uint64_t plan_generation;
+    uint64_t geometry_generation;
+    /* The optional POSIX RPC borrows owner->owner, NEVER a second owner. */
+    ti_sandbox_ipc *sandbox;
+    int sandbox_busy;
     int revoked;
     int proposed;
     int pending;
@@ -295,6 +302,8 @@ Java_io_turbointeract_android_NativeActionJni_open(
     owner->backend.user = owner;
 
     owner->provider_id = (uint32_t)provider_id;
+    owner->plan_generation = (uint64_t)plan_generation;
+    owner->geometry_generation = (uint64_t)geometry_generation;
     cfg.provider_id = (uint32_t)provider_id;
     cfg.capabilities = (uint32_t)capabilities;
     cfg.plan_generation = (uint64_t)plan_generation;
@@ -421,9 +430,19 @@ Java_io_turbointeract_android_NativeActionJni_updateGeometry(
     JNIEnv *env, jobject thiz, jlong handle, jlong generation) {
     ti_native_owner *owner = ti_owner(handle);
     (void)env; (void)thiz;
+    ti_status status;
     if (!owner || generation <= 0) return (jint)TI_EINVAL;
-    return (jint)ti_action_owner_update_geometry(owner->owner,
-                                                  (uint64_t)generation);
+    /* An open sandbox owns an exact geometry incarnation. The host must
+     * close its listener before rotating and reopen with a fresh token. */
+    ti_guard(owner);
+    if (owner->sandbox || owner->sandbox_busy) {
+        ti_unguard(owner);
+        return (jint)TI_ECONFLICT;
+    }
+    status = ti_action_owner_update_geometry(owner->owner, (uint64_t)generation);
+    if (status == TI_OK) owner->geometry_generation = (uint64_t)generation;
+    ti_unguard(owner);
+    return (jint)status;
 }
 
 JNIEXPORT jint JNICALL
@@ -447,11 +466,191 @@ Java_io_turbointeract_android_NativeActionJni_destroy(
     ti_status status;
     (void)thiz;
     if (!owner) return (jint)TI_EINVAL;
+    /* The RPC borrows the owner: forbid destruction until explicit sandbox
+     * teardown, including when the network worker is no longer active. */
+    ti_guard(owner);
+    if (owner->sandbox || owner->sandbox_busy) {
+        ti_unguard(owner);
+        return (jint)TI_ECONFLICT;
+    }
     status = ti_action_owner_destroy(&owner->owner);
+    ti_unguard(owner);
     if (status != TI_OK) return (jint)status;
     (*env)->DeleteGlobalRef(env, owner->peer);
     owner->peer = NULL;
     memset(&owner->proposal, 0, sizeof(owner->proposal));
     free(owner);
     return (jint)TI_OK;
+}
+
+/* Sandboxed phone requests reuse the owner created by NativeActionJni.open.
+ * The peer UID comes from the Android host process itself (not user JSON). */
+JNIEXPORT jint JNICALL
+Java_io_turbointeract_android_NativeActionJni_sandboxOpen(
+    JNIEnv *env, jobject thiz, jlong handle, jstring directory,
+    jlong task_id, jlong sandbox_run_id, jint allowed_tools) {
+    ti_native_owner *owner = ti_owner(handle);
+    ti_sandbox_ipc_config_v1 c = TI_SANDBOX_IPC_CONFIG_V1_INIT;
+    ti_sandbox_ipc *opened = NULL;
+    const char *path;
+    ti_status status;
+    int deny = 0;
+    (void)thiz;
+    if (!owner || !directory || task_id <= 0 || sandbox_run_id <= 0 ||
+        allowed_tools <= 0 ||
+        ((uint32_t)allowed_tools &
+         ~(TI_SANDBOX_PHONE_TAP | TI_SANDBOX_PHONE_BACK))) return (jint)TI_EINVAL;
+
+    ti_guard(owner);
+    if (owner->revoked) status = TI_EAUTH;
+    else if (owner->sandbox || owner->sandbox_busy) status = TI_ECONFLICT;
+    else {
+        owner->sandbox_busy = 1;
+        c.peer_uid = (uint32_t)geteuid();
+        c.allowed_tools = (uint32_t)allowed_tools;
+        c.provider_id = owner->provider_id;
+        c.task_id = (uint64_t)task_id;
+        c.sandbox_run_id = (uint64_t)sandbox_run_id;
+        c.plan_generation = owner->plan_generation;
+        c.display.device_session_id = owner->backend.device_session_id;
+        c.display.session_generation = owner->backend.session_generation;
+        c.display.display_id = owner->backend.display_id;
+        c.display.display_generation = owner->backend.display_generation;
+        c.display.geometry_generation = owner->geometry_generation;
+        c.action_owner = owner->owner; /* Same actual native pointer. */
+        status = TI_OK;
+    }
+    ti_unguard(owner);
+    if (status != TI_OK) return (jint)status;
+
+    path = (*env)->GetStringUTFChars(env, directory, NULL);
+    if (!path || ti_clear_java_exception(env)) {
+        status = TI_EINVAL;
+    } else {
+        status = ti_sandbox_ipc_open(&c, path, &opened);
+        (*env)->ReleaseStringUTFChars(env, directory, path);
+    }
+
+    ti_guard(owner);
+    deny = owner->revoked;
+    if (status == TI_OK && !deny) owner->sandbox = opened;
+    owner->sandbox_busy = 0;
+    ti_unguard(owner);
+    if (opened && (status != TI_OK || deny)) {
+        (void)ti_sandbox_ipc_destroy(&opened);
+    }
+    if (deny) return (jint)TI_EAUTH;
+    return (jint)status;
+}
+
+/* Only a host that already has the trusted native handle sees the token.
+ * The C11 core generated it with a CSPRNG and never sends it over the socket. */
+JNIEXPORT jobjectArray JNICALL
+Java_io_turbointeract_android_NativeActionJni_sandboxCredentials(
+    JNIEnv *env, jobject thiz, jlong handle) {
+    ti_native_owner *owner = ti_owner(handle);
+    ti_sandbox_ipc *ipc;
+    char path[TI_SANDBOX_IPC_PATH_CAP];
+    char secret[TI_SANDBOX_IPC_TOKEN_HEX_CAP];
+    jclass cls;
+    jobjectArray out = NULL;
+    jstring first = NULL, second = NULL;
+    ti_status status;
+    size_t i;
+    (void)thiz;
+    if (!owner) return NULL;
+    ti_guard(owner);
+    if (owner->revoked || owner->sandbox_busy || !owner->sandbox) {
+        ti_unguard(owner);
+        return NULL;
+    }
+    owner->sandbox_busy = 1;
+    ipc = owner->sandbox;
+    ti_unguard(owner);
+    status = ti_sandbox_ipc_credentials(ipc, path, sizeof(path),
+                                        secret, sizeof(secret));
+    if (status == TI_OK) {
+        cls = (*env)->FindClass(env, "java/lang/String");
+        if (cls && !ti_clear_java_exception(env)) {
+            out = (*env)->NewObjectArray(env, 2, cls, NULL);
+            if (out && !ti_clear_java_exception(env)) {
+                first = (*env)->NewStringUTF(env, path);
+                second = (*env)->NewStringUTF(env, secret);
+                if (first && second && !ti_clear_java_exception(env)) {
+                    (*env)->SetObjectArrayElement(env, out, 0, first);
+                    (*env)->SetObjectArrayElement(env, out, 1, second);
+                    if (ti_clear_java_exception(env)) out = NULL;
+                } else out = NULL;
+            } else out = NULL;
+            if (first) (*env)->DeleteLocalRef(env, first);
+            if (second) (*env)->DeleteLocalRef(env, second);
+            (*env)->DeleteLocalRef(env, cls);
+        }
+    }
+    /* Avoid leaving an extra copy of this 256-bit command credential on C stack. */
+    for (i = 0u; i < sizeof(secret); i++) ((volatile char *)secret)[i] = '\0';
+    ti_guard(owner);
+    owner->sandbox_busy = 0;
+    ti_unguard(owner);
+    return out;
+}
+
+/* Serve one authenticated kernel-credential-checked socket call.
+ * Never keep the native owner/peer callback state locked while serving. */
+JNIEXPORT jint JNICALL
+Java_io_turbointeract_android_NativeActionJni_sandboxServeOne(
+    JNIEnv *env, jobject thiz, jlong handle, jlong now_ns, jint timeout_ms) {
+    ti_native_owner *owner = ti_owner(handle);
+    ti_sandbox_ipc *ipc;
+    ti_status result;
+    (void)env; (void)thiz;
+    if (!owner || now_ns <= 0 || timeout_ms < 1 || timeout_ms > 10000)
+        return (jint)TI_EINVAL;
+    ti_guard(owner);
+    if (owner->revoked) result = TI_EAUTH;
+    else if (!owner->sandbox) result = TI_EINVAL;
+    else if (owner->sandbox_busy) result = TI_ECONFLICT;
+    else {
+        owner->sandbox_busy = 1;
+        result = TI_OK;
+    }
+    ipc = result == TI_OK ? owner->sandbox : NULL;
+    ti_unguard(owner);
+    if (!ipc) return (jint)result;
+    result = ti_sandbox_ipc_serve_one(ipc, (uint64_t)now_ns,
+                                      (uint32_t)timeout_ms);
+    ti_guard(owner);
+    owner->sandbox_busy = 0;
+    ti_unguard(owner);
+    return (jint)result;
+}
+
+/* Busy-safe terminal socket release, separate from ActionOwner revocation.
+ * The host must close Sandbox first before NativeAndroidActionOwner.close(). */
+JNIEXPORT jint JNICALL
+Java_io_turbointeract_android_NativeActionJni_sandboxClose(
+    JNIEnv *env, jobject thiz, jlong handle) {
+    ti_native_owner *owner = ti_owner(handle);
+    ti_sandbox_ipc *ipc;
+    ti_status status;
+    (void)env; (void)thiz;
+    if (!owner) return (jint)TI_EINVAL;
+    ti_guard(owner);
+    if (owner->sandbox_busy) {
+        ti_unguard(owner);
+        return (jint)TI_ECONFLICT;
+    }
+    if (!owner->sandbox) {
+        ti_unguard(owner);
+        return (jint)TI_OK;
+    }
+    owner->sandbox_busy = 1;
+    ipc = owner->sandbox;
+    ti_unguard(owner);
+    status = ti_sandbox_ipc_destroy(&ipc);
+    ti_guard(owner);
+    if (status == TI_OK) owner->sandbox = NULL;
+    owner->sandbox_busy = 0;
+    ti_unguard(owner);
+    return (jint)status;
 }
