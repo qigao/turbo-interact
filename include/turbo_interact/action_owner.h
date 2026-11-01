@@ -2,6 +2,7 @@
 #define TURBO_INTERACT_ACTION_OWNER_H
 
 #include "turbo_interact/domain.h"
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
