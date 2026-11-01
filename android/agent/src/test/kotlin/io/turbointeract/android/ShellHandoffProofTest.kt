@@ -44,6 +44,8 @@ class ShellHandoffProofTest {
             "b".repeat(64), 101, 7, nonce)
         assertFalse(cmd.command.contains(nonce))
         assertEquals(nonce + "\n", cmd.nonceLine)
+        assertFalse(cmd.toString().contains(nonce))
+        assertTrue(cmd.toString().contains("redacted"))
         assertTrue(cmd.command.contains("setsid app_process"))
         assertTrue(cmd.command.contains("io.turbointeract.android.TurboDisplayShellMain"))
         assertTrue(cmd.command.contains("'\\''"))
