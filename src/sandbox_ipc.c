@@ -196,10 +196,20 @@ static int ti_ipc_peer_uid(int fd, uint32_t *uid) {
 }
 
 /* One absolute monotonic deadline for accept + all read/write events.
- * Per-recv SO_RCVTIMEO alone is insufficient against slow trickle traffic. */
+ * Per-recv SO_RCVTIMEO alone is insufficient against slow trickle traffic.
+ * IMPORTANT: Android Kotlin supplies now_ns from elapsedRealtimeNanos(), which
+ * is CLOCK_BOOTTIME (includes deep sleep), NOT CLOCK_MONOTONIC. The delta
+ * sampled here must include suspend too, otherwise a slow/suspended reader
+ * may extend a caller's deadline despite Android's elapsed-realtime clock.
+ * Native desktop contracts continue to supply CLOCK_MONOTONIC timestamps. */
 static uint64_t ti_ipc_time_ns(void) {
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0 || ts.tv_sec < 0) return 0u;
+#if defined(__ANDROID__)
+    const clockid_t host_clock = CLOCK_BOOTTIME;
+#else
+    const clockid_t host_clock = CLOCK_MONOTONIC;
+#endif
+    if (clock_gettime(host_clock, &ts) != 0 || ts.tv_sec < 0) return 0u;
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
