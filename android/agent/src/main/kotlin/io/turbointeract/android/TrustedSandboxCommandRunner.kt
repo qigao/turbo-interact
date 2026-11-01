@@ -43,7 +43,9 @@ internal object TrustedSandboxLaunchPolicy {
     fun validate(command: TrustedSandboxCommand) {
         val name = command.nativeLibraryName
         require(name.startsWith("lib") && name.endsWith(".so") && name.length in 7..64)
-        require(name.substring(3, name.length - 3).all { it.isLetterOrDigit() || it == '_' })
+        require(name.substring(3, name.length - 3).all { ch ->
+            ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch == '_'
+        })
         require(command.taskId > 0 && command.sandboxRunId > 0)
         require(command.allowedTools in 1..3)
         require(command.maxDurationMs in 100L..120_000L)
@@ -215,7 +217,7 @@ class TrustedSandboxCommandRunner(
             val closed = owner.closeSandbox()
             check(closed) { "sandbox socket still borrowed; native owner MUST NOT be destroyed" }
         }
-        return SandboxProcessReceipt(outcome, exitCode, accepted, rejected,
-            collector?.finish() ?: "")
+        val output = (collector?.finish() ?: "").replace(credentials.tokenHex, "[redacted]")
+        return SandboxProcessReceipt(outcome, exitCode, accepted, rejected, output)
     }
 }

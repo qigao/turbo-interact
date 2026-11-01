@@ -129,11 +129,14 @@ internal class NativeActionPeer(
  * Never put the per-run token in logs, a model message, argv, or persistent files.
  * Actual socket peer UID is read by the OS; there is no caller-supplied UID.
  */
-data class NativeSandboxCredentials(val socketPath: String, val tokenHex: String) {
+class NativeSandboxCredentials(val socketPath: String, val tokenHex: String) {
     init {
         require(socketPath.startsWith("/") && socketPath.length < 104 && '\u0000' !in socketPath)
         require(tokenHex.length == 64 && tokenHex.all { it in '0'..'9' || it in 'a'..'f' })
     }
+
+    // Secrets are for the reviewed worker's stdin only; never in casual logs.
+    override fun toString() = "NativeSandboxCredentials(<redacted>)"
 }
 
 /** Declared in the production AAR's NDK shared target, built from root C11. */
