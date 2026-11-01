@@ -93,6 +93,7 @@ if(BUILD_TESTING)
     add_dependencies(ti_sandbox_ipc_test turbo_interact_sandbox_worker)
   endif()
   add_test(NAME ti_sandbox_ipc_test COMMAND ti_sandbox_ipc_test)
+  set_tests_properties(ti_sandbox_ipc_test PROPERTIES TIMEOUT 15)
 
   add_executable(ti_android_shell_backend_test tests/test_android_shell_backend.c)
   target_link_libraries(ti_android_shell_backend_test PRIVATE TurboInteract::Core)
