@@ -107,8 +107,10 @@ typedef struct ti_sg_terminal_entry_v1 {
     uint64_t correlation; /* MUST equal the existing AnalysisRequest event_id */
     uint64_t result_event_id; /* unique nonzero downstream event ID */
     ti_bridge_ticket_v1 request_ticket; /* still TAKEN, owns the FramePin */
+    uint32_t attempted; /* owner-local one-shot terminal delivery gate */
+    uint32_t reserved;
 } ti_sg_terminal_entry_v1;
-#define TI_SG_TERMINAL_ENTRY_V1_INIT {sizeof(ti_sg_terminal_entry_v1),TI_ABI_VERSION,0u,0u,{0}}
+#define TI_SG_TERMINAL_ENTRY_V1_INIT {sizeof(ti_sg_terminal_entry_v1),TI_ABI_VERSION,0u,0u,{0},0u,0u}
 
 typedef struct ti_sg_terminal_delivery_v1 {
     uint32_t size, version;
@@ -116,7 +118,7 @@ typedef struct ti_sg_terminal_delivery_v1 {
     ti_bridge *bridge; /* borrowed: must outlive all portal terminal callbacks */
     uint64_t plan_generation, provider_generation;
     uint32_t result_schema_id, entry_count;
-    const ti_sg_terminal_entry_v1 *entries; /* caller-owned, finite, immutable */
+    ti_sg_terminal_entry_v1 *entries; /* caller-owned, bounded, stable */
     uint32_t reserved;
 } ti_sg_terminal_delivery_v1;
 #define TI_SG_TERMINAL_DELIVERY_V1_INIT {sizeof(ti_sg_terminal_delivery_v1),TI_ABI_VERSION,NULL,NULL,0u,0u,0u,0u,NULL,0u}
@@ -127,6 +129,11 @@ typedef struct ti_sg_terminal_delivery_v1 {
  * TAKEN/pending; no replay/reemit/retry. Host must reconcile and explicitly
  * call tm_od_settle_pending_completion() before teardown.
  * The matching pinned AnalysisRequest remains owned until its own settle.
+ * Every entry is single-use: attempted is set ON THE OWNER lane for the
+ * first matching Provider terminal, even when Bridge delivery is rejected.
+ * A repeated correlation/new Provider ticket cannot re-emit an old result.
+ * Entries and all borrowed owners must outlive Provider callback JOIN,
+ * pending terminal reconciliation and Bridge request settlement.
  */
 TI_API int ti_sg_bridge_emit_terminal(void *delivery_context,
                                       const tm_pc_result_v1 *terminal);

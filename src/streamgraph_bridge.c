@@ -258,7 +258,7 @@ int ti_sg_bridge_emit_terminal(void *delivery_context,
                                const tm_pc_result_v1 *terminal) {
     const ti_sg_terminal_delivery_v1 *c=
         (const ti_sg_terminal_delivery_v1 *)delivery_context;
-    const ti_sg_terminal_entry_v1 *binding=NULL;
+    ti_sg_terminal_entry_v1 *binding=NULL;
     ti_bridge_event_v1 request=TI_BRIDGE_EVENT_V1_INIT;
     ti_bridge_event_v1 emitted=TI_BRIDGE_EVENT_V1_INIT;
     tm_fs_frame_ref_v1 upstream=TM_FS_FRAME_REF_V1_INIT;
@@ -291,19 +291,25 @@ int ti_sg_bridge_emit_terminal(void *delivery_context,
     /* Caller freezes a bounded correlation ledger before starting Provider.
      * Duplicate identities must fail, not accidentally deliver two results. */
     for (i=0u;i<c->entry_count;i++) {
-        const ti_sg_terminal_entry_v1 *entry=&c->entries[i];
+        ti_sg_terminal_entry_v1 *entry=&c->entries[i];
+        uint32_t j;
         if (entry->version!=TI_ABI_VERSION ||
             entry->size!=sizeof(*entry) ||
             !entry->correlation || !entry->result_event_id ||
             entry->correlation==entry->result_event_id ||
             !entry->request_ticket.incarnation ||
-            !entry->request_ticket.generation)
+            !entry->request_ticket.generation ||
+            entry->reserved || entry->attempted>1u)
             return -1;
+        for (j=0u;j<i;j++)
+            if (entry->correlation==c->entries[j].correlation ||
+                entry->result_event_id==c->entries[j].result_event_id)
+                return -1;
         if (entry->correlation==terminal->correlation) {
             binding=entry;matches++;
         }
     }
-    if (matches!=1u) return -1;
+    if (matches!=1u || binding->attempted) return -1;
 
     /* Do not trust a host-supplied FrameRef: always fetch the ACTUAL
      * pinned TAKEN Bridge row and validate original source generations. */
@@ -321,6 +327,10 @@ int ti_sg_bridge_emit_terminal(void *delivery_context,
     rc=validate_source(c->source_context,&upstream,&meta);
     if (rc!=TI_OK || request.header.producer_sequence!=meta.packet_sequence)
         return -1;
+    /* Only the existing Media Owner runs this callback. The Portal always
+     * emits one terminal per ticket; this additionally refuses a SECOND
+     * newly begun Provider operation with the old request correlation. */
+    binding->attempted=1u;
 
     result.size=sizeof(result);result.version=TI_ABI_VERSION;
     result.outcome=terminal->outcome;

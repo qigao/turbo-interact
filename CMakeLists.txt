@@ -117,7 +117,9 @@ if(BUILD_TESTING)
         ${TI_M17_OPENH264_INCLUDE_DIR})
       target_compile_definitions(ti_bridge_test PRIVATE
         TI_M17_H264_REAL_TEST=1 TURBO_MEDIA_HAS_H264=1)
-      target_link_libraries(ti_bridge_test PRIVATE ${TI_M17_OPENH264_LIBRARY})
+      find_package(Threads REQUIRED)
+      target_link_libraries(ti_bridge_test PRIVATE
+        ${TI_M17_OPENH264_LIBRARY} Threads::Threads)
     endif()
   endif()
   add_test(NAME ti_bridge_test COMMAND ti_bridge_test)

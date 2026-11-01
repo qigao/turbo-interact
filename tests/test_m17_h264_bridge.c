@@ -140,6 +140,64 @@ static ti_status m17_visit_analysis(void *user,
     return TI_OK;
 }
 
+/* Host-owned Provider worker: only the existing TurboMedia
+ * ProviderCompletion portal is touched off-owner. There is NO inference
+ * implementation here; the test qualifies the terminal/owner protocol. */
+#include <pthread.h>
+typedef struct m17_completion_worker {
+    tm_pc_portal *portal;
+    tm_pc_ticket_v1 ticket;
+    int32_t provider_status;
+    tm_pc_status result;
+} m17_completion_worker;
+static void *m17_worker_complete(void *arg) {
+    m17_completion_worker *w=(m17_completion_worker *)arg;
+    w->result=tm_pc_complete(w->portal,w->ticket,w->provider_status);
+    return NULL;
+}
+static void m17_complete_from_real_worker(tm_pc_portal *portal,
+                                          tm_pc_ticket_v1 ticket,
+                                          int32_t status) {
+    m17_completion_worker worker={0};
+    pthread_t thread;
+    worker.portal=portal;
+    worker.ticket=ticket;
+    worker.provider_status=status;
+    assert(pthread_create(&thread,NULL,m17_worker_complete,&worker)==0);
+    assert(pthread_join(thread,NULL)==0);
+    assert(worker.result==TM_PC_OK);
+}
+static ti_sg_analysis_terminal_v1 m17_take_terminal(ti_bridge *bridge,
+                                                     uint64_t event_id,
+                                                     uint32_t outcome) {
+    ti_bridge_ticket_v1 taken={0};
+    ti_bridge_event_v1 event=TI_BRIDGE_EVENT_V1_INIT;
+    ti_sg_analysis_terminal_v1 value={0};
+    size_t bytes=0u;
+    assert(ti_bridge_take(bridge,&taken,&event)==TI_OK);
+    assert(event.header.kind==TI_EVENT_ANALYSIS_RESULT &&
+           event.header.event_id==event_id &&
+           event.header.correlation_id==(event_id-10u) &&
+           event.header.schema_id==67u &&
+           event.header.payload_bytes==sizeof(value) &&
+           event.pin_frame==0u && event.has_frame==0u);
+    assert(ti_bridge_read_payload(bridge,taken,&value,sizeof(value),&bytes)==TI_OK);
+    assert(bytes==sizeof(value) && value.size==sizeof(value) &&
+           value.version==TI_ABI_VERSION &&
+           value.outcome==outcome && value.completion_observed==1u);
+    assert(value.correlation==event_id-10u &&
+           value.provider_generation==55u &&
+           value.source_packet_sequence==1u &&
+           value.geometry_generation==5u &&
+           value.capture_session_hi==88u &&
+           value.capture_session_lo==99u &&
+           value.pts==0u && value.dts==0u &&
+           value.timebase_num==1u && value.timebase_den==1000000u);
+    assert(ti_bridge_settle(bridge,taken)==TI_OK);
+    assert(ti_bridge_settle(bridge,taken)==TI_ESTALE);
+    return value;
+}
+
 void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
     uint8_t *raw=(uint8_t *)malloc(TI_M17_I420);
     uint8_t *encoded=(uint8_t *)malloc(TI_M17_CAP);
@@ -162,6 +220,20 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
     ti_bridge_event_v1 event=TI_BRIDGE_EVENT_V1_INIT;
     ti_observation_v1 received=TI_OBSERVATION_V1_INIT;
     m17_bridge_fixture f={0};
+    tm_ho_inbox *inbox=NULL;
+    tm_ho_config_v1 inbox_cfg=TM_HO_CONFIG_V1_INIT;
+    tm_od_owner *media_owner=NULL;
+    tm_od_config_v1 owner_cfg=TM_OD_CONFIG_V1_INIT;
+    tm_pc_portal *portal=NULL;
+    tm_pc_config_v1 portal_cfg=TM_PC_CONFIG_V1_INIT;
+    tm_pc_ticket_v1 provider_a={0},provider_b={0},duplicate={0};
+    tm_pc_result_v1 terminal=TM_PC_RESULT_V1_INIT;
+    ti_bridge_ticket_v1 taken_a={0},taken_b={0};
+    ti_sg_terminal_entry_v1 entries[2]={
+        TI_SG_TERMINAL_ENTRY_V1_INIT,
+        TI_SG_TERMINAL_ENTRY_V1_INIT};
+    ti_sg_terminal_delivery_v1 delivery=TI_SG_TERMINAL_DELIVERY_V1_INIT;
+    ti_sg_analysis_terminal_v1 outcome={0};
     assert(raw && encoded);
     turbo_codec_registry_init();
     encode_cfg.width=TI_M17_W;encode_cfg.height=TI_M17_H;
@@ -227,7 +299,6 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
     assert(f.sink_visits==1u);
     assert(tm_fs_get_metadata(store,&f.ref,&check)==TM_FS_OK);
     assert(tm_ex_stop(executor)==TM_EX_OK);
-    assert(tm_ex_destroy(executor)==TM_EX_OK);
 
     assert(ti_bridge_take(f.bridge,&ticket,&event)==TI_OK);
     assert(event.header.kind==TI_EVENT_OBSERVATION && event.pin_frame==0u);
@@ -236,16 +307,89 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
     assert(read==sizeof(received) && received.capture_sequence==1u);
     assert(received.frame.frame_id==f.ref.frame_id);
     assert(ti_bridge_settle(f.bridge,ticket)==TI_OK);
-    assert(ti_bridge_take(f.bridge,&ticket,&event)==TI_OK);
-    assert(ti_sg_bridge_visit_pinned(&f.ctx,f.bridge,ticket,
+
+    /* Both exact request rows retain independent FramePins after the media
+     * preview sink and Source have stopped. No scheduling on worker thread. */
+    assert(ti_bridge_take(f.bridge,&taken_a,&event)==TI_OK);
+    assert(event.header.kind==TI_EVENT_ANALYSIS_REQUEST &&
+           event.header.event_id==11u && event.pin_frame==1u);
+    assert(ti_sg_bridge_visit_pinned(&f.ctx,f.bridge,taken_a,
                                      m17_visit_analysis,&f)==TI_OK);
-    assert(ti_bridge_settle(f.bridge,ticket)==TI_OK);
-    assert(tm_fs_get_metadata(store,&f.ref,&check)==TM_FS_OK);
-    assert(ti_bridge_take(f.bridge,&ticket,&event)==TI_OK);
-    assert(ti_sg_bridge_visit_pinned(&f.ctx,f.bridge,ticket,
+    assert(ti_bridge_take(f.bridge,&taken_b,&event)==TI_OK);
+    assert(event.header.kind==TI_EVENT_ANALYSIS_REQUEST &&
+           event.header.event_id==12u && event.pin_frame==1u);
+    assert(ti_sg_bridge_visit_pinned(&f.ctx,f.bridge,taken_b,
                                      m17_visit_analysis,&f)==TI_OK);
-    assert(ti_bridge_settle(f.bridge,ticket)==TI_OK);
     assert(f.analysis_visits==2u);
+
+    /* Reuse existing TurboMedia ProviderCompletion + OwnerDispatch, never
+     * create a new executor/portal scheduler inside TurboInteract. */
+    inbox_cfg.capacity=2u;
+    assert(tm_ho_create(&inbox_cfg,&inbox)==TM_HO_OK);
+    assert(tm_od_create(inbox,executor,store,&owner_cfg,&media_owner)==TM_OD_OK);
+    portal_cfg.capacity=2u;portal_cfg.provider_generation=55u;
+    assert(tm_pc_create(&portal_cfg,&portal)==TM_PC_OK);
+    entries[0].correlation=11u;entries[0].result_event_id=21u;
+    entries[0].request_ticket=taken_a;
+    entries[1].correlation=12u;entries[1].result_event_id=22u;
+    entries[1].request_ticket=taken_b;
+    delivery.source_context=&f.ctx;
+    delivery.bridge=f.bridge;
+    delivery.plan_generation=3u;delivery.provider_generation=55u;
+    delivery.result_schema_id=67u;
+    delivery.entries=entries;delivery.entry_count=2u;
+    assert(tm_od_bind_completion(media_owner,portal,ti_sg_bridge_emit_terminal,
+                                 &delivery)==TM_OD_OK);
+
+    /* Actual callback thread completes the originally admitted Portal
+     * ticket. Only the Media Owner may deliver terminal values to Bridge. */
+    assert(tm_pc_begin(portal,11u,&provider_a)==TM_PC_OK);
+    m17_complete_from_real_worker(portal,provider_a,0);
+    assert(tm_od_step_completion(media_owner,&terminal)==TM_OD_OK);
+    assert(terminal.correlation==11u &&
+           terminal.outcome==TM_PC_COMPLETED);
+    outcome=m17_take_terminal(f.bridge,21u,TM_PC_COMPLETED);
+    assert(outcome.provider_status==0 && entries[0].attempted==1u);
+
+    /* Cancellation wins before callback completion: terminal is CANCELLED,
+     * never silently upgraded to model/Agent success. */
+    assert(tm_pc_begin(portal,12u,&provider_b)==TM_PC_OK);
+    assert(tm_pc_request_cancel(portal,provider_b)==TM_PC_OK);
+    m17_complete_from_real_worker(portal,provider_b,99);
+    terminal=(tm_pc_result_v1)TM_PC_RESULT_V1_INIT;
+    assert(tm_od_step_completion(media_owner,&terminal)==TM_OD_OK);
+    assert(terminal.correlation==12u &&
+           terminal.outcome==TM_PC_CANCELLED &&
+           terminal.completion_observed==1u);
+    outcome=m17_take_terminal(f.bridge,22u,TM_PC_CANCELLED);
+    assert(outcome.provider_status==99 && entries[1].attempted==1u);
+
+    /* A fresh Portal ticket with an OLD correlation MUST NOT emit another
+     * fact for the same pinned AnalysisRequest. The existing Owner retains
+     * the failed terminal as TAKEN until explicit reconciliation. */
+    assert(tm_pc_begin(portal,11u,&duplicate)==TM_PC_OK);
+    m17_complete_from_real_worker(portal,duplicate,0);
+    terminal=(tm_pc_result_v1)TM_PC_RESULT_V1_INIT;
+    assert(tm_od_step_completion(media_owner,&terminal)==TM_OD_EDELIVERY);
+    assert(tm_od_pending_completion(media_owner,&terminal)==TM_OD_OK &&
+           terminal.correlation==11u);
+    assert(tm_od_step_completion(media_owner,&terminal)==TM_OD_EBUSY);
+    assert(tm_od_settle_pending_completion(media_owner)==TM_OD_OK);
+    assert(tm_od_pending_completion(media_owner,&terminal)==TM_OD_EMPTY);
+
+    assert(tm_pc_seal(portal)==TM_PC_OK);
+    assert(tm_ho_seal(inbox)==TM_HO_OK);
+    assert(tm_od_destroy(media_owner)==TM_OD_OK);
+    assert(tm_pc_destroy(portal)==TM_PC_OK);
+    assert(tm_ho_destroy(inbox)==TM_HO_OK);
+    assert(tm_ex_destroy(executor)==TM_EX_OK);
+
+    /* Terminal values never mint new Pins. The original two TAKEN analysis
+     * tickets remain independently settleable and retain the retired slot. */
+    assert(ti_bridge_settle(f.bridge,taken_a)==TI_OK);
+    assert(tm_fs_get_metadata(store,&f.ref,&check)==TM_FS_OK);
+    assert(ti_bridge_settle(f.bridge,taken_b)==TI_OK);
+    assert(ti_bridge_settle(f.bridge,taken_b)==TI_ESTALE);
     assert(tm_fs_get_metadata(store,&f.ref,&check)==TM_FS_ESTALE);
     assert(ti_bridge_seal(f.bridge)==TI_OK);
     assert(ti_bridge_destroy(f.bridge)==TI_OK);
