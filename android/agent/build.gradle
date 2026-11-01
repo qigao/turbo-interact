@@ -1,0 +1,20 @@
+plugins {
+    id 'io.github.qigao.simpledsl.android'
+}
+
+simpledsl {
+    androidLibrary {
+        namespace = 'io.turbointeract.android'
+    }
+}
+
+// AGP 9 disables AIDL by default. The production Binder interface requires it.
+android {
+    buildFeatures {
+        aidl = true
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
