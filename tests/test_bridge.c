@@ -245,7 +245,15 @@ static void test_owned_observation_payload(void) {
     assert(ti_bridge_destroy(b) == TI_OK);
 }
 
+#ifdef TI_STREAMGRAPH_BRIDGE_REAL
+/* Linked to actual installed TurboMedia::StreamGraph. Never a fake Store. */
+void test_real_turbomedia_frame_store_bridge(void);
+#endif
+
 int main(void) {
+#ifdef TI_STREAMGRAPH_BRIDGE_REAL
+    test_real_turbomedia_frame_store_bridge();
+#endif
     test_pin_ownership_and_aba();
     test_capacity_cancel_and_failed_release();
     test_bad_identity_and_weak_ref();
