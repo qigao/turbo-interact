@@ -35,7 +35,9 @@ typedef enum ti_status {
     TI_ESTALE = -6,
     TI_EEXPIRED = -7,
     TI_EUNSUPPORTED = -8,
-    TI_ENOMEM = -9
+    TI_ENOMEM = -9,
+    TI_EBUSY = -10,
+    TI_EFULL = -11
 } ti_status;
 
 typedef struct ti_frame_ref_v1 {
