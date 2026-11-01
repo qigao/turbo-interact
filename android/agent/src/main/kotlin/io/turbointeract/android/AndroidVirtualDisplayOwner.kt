@@ -57,6 +57,15 @@ class AndroidVirtualDisplayOwner(
         registry.current(ref) != null && displays[ref.displayId]?.origin?.displayGeneration == ref.displayGeneration
     }
 
+    /**
+     * Serialize an already admitted input or task launch against display teardown
+     * and Surface replacement. Caller MUST finish live host authorization before
+     * entering this critical section to avoid a remote Binder reentrancy deadlock.
+     */
+    internal fun <T> withOwnedDisplay(ref: DisplayRef, effect: () -> T): T? = synchronized(monitor) {
+        if (!current(ref)) null else effect()
+    }
+
     /** Encoder/ImageReader swap preserves the Android display and App task. */
     fun replaceSurface(ref: DisplayRef, surface: Surface): Boolean = synchronized(monitor) {
         if (!current(ref)) return@synchronized false

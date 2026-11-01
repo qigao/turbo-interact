@@ -62,12 +62,14 @@ class AndroidShellAppLauncher(
         val intent = try { context.packageManager.getLaunchIntentForPackage(packageName) }
             catch (_: Exception) { null } ?: return@synchronized LaunchOutcome.NOT_FOUND
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (!owner.current(ref)) return@synchronized LaunchOutcome.STALE_DISPLAY
-        if (!attempts.claim(InputAttemptKey.from(ref, actionId, actionId))) {
-            return@synchronized LaunchOutcome.DENIED // Same launch attempt is never replayed.
-        }
-        val submitted = try { tasks.start(intent, ref.displayId) } catch (_: Exception) { false }
-        if (submitted) LaunchOutcome.SUBMITTED else LaunchOutcome.UNKNOWN
+        // The only external side effect is serialized against release and ID reuse.
+        owner.withOwnedDisplay(ref) {
+            if (!attempts.claim(InputAttemptKey.from(ref, actionId, actionId))) {
+                return@withOwnedDisplay LaunchOutcome.DENIED
+            }
+            val submitted = try { tasks.start(intent, ref.displayId) } catch (_: Exception) { false }
+            if (submitted) LaunchOutcome.SUBMITTED else LaunchOutcome.UNKNOWN
+        } ?: LaunchOutcome.STALE_DISPLAY
     }
 }
 

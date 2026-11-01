@@ -42,35 +42,41 @@ class AndroidSdkInput(
     private val inputLock = Any()
 
     fun tap(intent: InputIntent, x: Int, y: Int): InputDispatch = synchronized(inputLock) {
+        // Do the remote host admission outside the DisplayOwner monitor.
         if (intent.kind != InputIntent.Kind.TAP || !admit(intent)) return@synchronized InputDispatch.REJECTED
-        val geometry = registry.current(intent.display)?.geometry ?: return@synchronized InputDispatch.REJECTED
-        if (x !in 0 until geometry.width || y !in 0 until geometry.height) return@synchronized InputDispatch.REJECTED
-        if (!claim(intent)) return@synchronized InputDispatch.REJECTED
-
-        val now = SystemClock.uptimeMillis()
-        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat(), 0)
-        val up = MotionEvent.obtain(now, now + 50L, MotionEvent.ACTION_UP, x.toFloat(), y.toFloat(), 0)
-        try {
-            down.source = InputDevice.SOURCE_TOUCHSCREEN
-            up.source = InputDevice.SOURCE_TOUCHSCREEN
-            if (!inject(down, intent.display.displayId)) return@synchronized InputDispatch.UNKNOWN
-            SystemClock.sleep(50L)
-            if (inject(up, intent.display.displayId)) InputDispatch.SENT else {
-                // Best-effort pointer recovery; outcome is still UNKNOWN.
-                val cancel = MotionEvent.obtain(now, SystemClock.uptimeMillis(),
-                    MotionEvent.ACTION_CANCEL, x.toFloat(), y.toFloat(), 0)
-                try {
-                    cancel.source = InputDevice.SOURCE_TOUCHSCREEN
-                    inject(cancel, intent.display.displayId)
-                } finally {
-                    cancel.recycle()
-                }
-                InputDispatch.UNKNOWN
+        owner.withOwnedDisplay(intent.display) {
+            val geometry = registry.current(intent.display)?.geometry
+                ?: return@withOwnedDisplay InputDispatch.REJECTED
+            if (x !in 0 until geometry.width || y !in 0 until geometry.height) {
+                return@withOwnedDisplay InputDispatch.REJECTED
             }
-        } finally {
-            down.recycle()
-            up.recycle()
-        }
+            if (!claim(intent)) return@withOwnedDisplay InputDispatch.REJECTED
+
+            val now = SystemClock.uptimeMillis()
+            val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat(), 0)
+            val up = MotionEvent.obtain(now, now + 50L, MotionEvent.ACTION_UP, x.toFloat(), y.toFloat(), 0)
+            try {
+                down.source = InputDevice.SOURCE_TOUCHSCREEN
+                up.source = InputDevice.SOURCE_TOUCHSCREEN
+                if (!inject(down, intent.display.displayId)) return@withOwnedDisplay InputDispatch.UNKNOWN
+                SystemClock.sleep(50L)
+                if (inject(up, intent.display.displayId)) InputDispatch.SENT else {
+                    // One best-effort cancellation. This can NEVER make UNKNOWN a success.
+                    val cancel = MotionEvent.obtain(now, SystemClock.uptimeMillis(),
+                        MotionEvent.ACTION_CANCEL, x.toFloat(), y.toFloat(), 0)
+                    try {
+                        cancel.source = InputDevice.SOURCE_TOUCHSCREEN
+                        inject(cancel, intent.display.displayId)
+                    } finally {
+                        cancel.recycle()
+                    }
+                    InputDispatch.UNKNOWN
+                }
+            } finally {
+                down.recycle()
+                up.recycle()
+            }
+        } ?: InputDispatch.REJECTED
     }
 
     fun key(intent: InputIntent): InputDispatch = synchronized(inputLock) {
@@ -79,14 +85,17 @@ class AndroidSdkInput(
             InputIntent.Kind.ENTER -> KeyEvent.KEYCODE_ENTER
             else -> return@synchronized InputDispatch.REJECTED
         }
-        if (!admit(intent) || !claim(intent)) return@synchronized InputDispatch.REJECTED
-        val now = SystemClock.uptimeMillis()
-        val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, 0,
-            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD)
-        val up = KeyEvent.changeAction(down, KeyEvent.ACTION_UP)
-        if (!inject(down, intent.display.displayId)) InputDispatch.UNKNOWN
-        else if (inject(up, intent.display.displayId)) InputDispatch.SENT
-        else InputDispatch.UNKNOWN
+        if (!admit(intent)) return@synchronized InputDispatch.REJECTED
+        owner.withOwnedDisplay(intent.display) {
+            if (!claim(intent)) return@withOwnedDisplay InputDispatch.REJECTED
+            val now = SystemClock.uptimeMillis()
+            val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, 0,
+                KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD)
+            val up = KeyEvent.changeAction(down, KeyEvent.ACTION_UP)
+            if (!inject(down, intent.display.displayId)) InputDispatch.UNKNOWN
+            else if (inject(up, intent.display.displayId)) InputDispatch.SENT
+            else InputDispatch.UNKNOWN
+        } ?: InputDispatch.REJECTED
     }
 
     private fun admit(intent: InputIntent): Boolean {
