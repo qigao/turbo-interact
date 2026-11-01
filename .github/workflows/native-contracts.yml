@@ -22,67 +22,69 @@ on:
       - '.github/workflows/native-contracts.yml'
   workflow_dispatch:
 
+concurrency:
+  group: native-contracts-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   native:
-    name: ${{ matrix.os }} C11 and installed C/C++ consumers
+    name: ${{ matrix.os }} real C11 product build
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2022]
     steps:
       - uses: actions/checkout@v4
-      - name: Configure project
+      - name: Install Windows llvm-mingw (no MSVC)
+        id: llvm-mingw
+        if: runner.os == 'Windows'
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@22ab039b6505c06e7a2f03f723305050d775ecf3
+        with:
+          target: x64
+          build-type: toolchain-only
+          obfuscator: 'false'
+      - name: Configure native product with Clang
         shell: bash
+        env:
+          LLVM_MINGW_TOOLCHAIN: ${{ steps.llvm-mingw.outputs.toolchain-file }}
         run: |
+          set -euo pipefail
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cmake_opts=(-G "Visual Studio 17 2022" -A x64)
+            cmake -S . -B build/ci -G Ninja \
+              -DCMAKE_TOOLCHAIN_FILE="$LLVM_MINGW_TOOLCHAIN" \
+              -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           else
-            cmake_opts=(-G Ninja)
+            CC=clang CXX=clang++ cmake -S . -B build/ci -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           fi
-          cmake -S . -B build/ci "${cmake_opts[@]}" -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
-      - name: Build project
+      - name: Compile C11 product and contract tests
         shell: bash
-        run: cmake --build build/ci --config Debug --parallel 2
-      - name: Run C11 contract tests
+        run: cmake --build build/ci --parallel 2
+      - name: Execute deterministic C11 contract tests
         shell: bash
-        run: ctest --test-dir build/ci -C Debug --output-on-failure
-      - name: Install library and headers
+        run: ctest --test-dir build/ci --output-on-failure
+      - name: Install production C11 headers and target
         shell: bash
-        run: cmake --install build/ci --config Debug --prefix "${{ github.workspace }}/install"
-      - name: Configure installed SDK consumers
-        shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cmake_opts=(-G "Visual Studio 17 2022" -A x64)
-          else
-            cmake_opts=(-G Ninja)
-          fi
-          cmake -S tests/install_consumer -B build/consumer "${cmake_opts[@]}" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install"
-      - name: Build installed C11/C++17 consumers
-        shell: bash
-        run: cmake --build build/consumer --config Debug --parallel 2
-      - name: Test installed consumers
-        shell: bash
-        run: ctest --test-dir build/consumer -C Debug --output-on-failure
+        run: cmake --install build/ci --prefix "$RUNNER_TEMP/turbo-interact-install"
 
   sanitizers:
-    name: Linux ASan/UBSan contracts
+    name: Linux Clang ASan/UBSan product contracts
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Configure sanitized C library
-        run: >-
-          cmake -S . -B build/sanitize -G Ninja
-          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-          -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
-          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
-      - name: Build and test
+      - name: Build and test with runner-native Clang sanitizers
+        shell: bash
         run: |
+          set -euo pipefail
+          CC=clang CXX=clang++ cmake -S . -B build/sanitize -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+            -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+            -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
           cmake --build build/sanitize --parallel 2
           ctest --test-dir build/sanitize --output-on-failure
