@@ -76,7 +76,9 @@ object TrustedSandboxWorkerInstallation {
             return TrustedWorkerInstallStatus.WORKER_NOT_IMMUTABLE_EXECUTABLE
         }
         if (!candidate.isFile) return TrustedWorkerInstallStatus.WORKER_NOT_INSTALLED
-        if (!candidate.canExecute() || candidate.canWrite()) {
+        // The binary AND its parent must be OS-managed/read-only to the App:
+        // an App-writable directory can replace even a chmod-readonly file.
+        if (!candidate.canExecute() || candidate.canWrite() || root.canWrite()) {
             return TrustedWorkerInstallStatus.WORKER_NOT_IMMUTABLE_EXECUTABLE
         }
         return TrustedWorkerInstallStatus.READY_FOR_EXEC_ATTEMPT
