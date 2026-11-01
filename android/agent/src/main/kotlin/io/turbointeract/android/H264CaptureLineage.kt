@@ -35,6 +35,24 @@ internal object H264CaptureLineageGate {
             (bytes[2] == 1.toByte() ||
                 (bytes[2] == 0.toByte() && bytes[3] == 1.toByte()))
 
+    /**
+     * One terminal EOS marker is required even for a zero-byte Codec buffer.
+     * A nonempty final access unit needs TWO queue credits: picture then EOS.
+     */
+    fun outputRows(bytes: Int, config: Boolean, key: Boolean, eos: Boolean): Int =
+        when {
+            bytes < 0 || (config && (key || eos)) -> 0
+            bytes == 0 && !eos -> 0
+            eos && bytes > 0 -> 2
+            else -> 1
+        }
+
+    /** Preflight against the existing TurboMedia CPU FrameStore 8 MiB cap. */
+    fun fitsI420FrameStore(width: Int, height: Int): Boolean =
+        width in 16..4096 && height in 16..4096 &&
+            width % 2 == 0 && height % 2 == 0 &&
+            width.toLong() * height * 3L / 2L <= 8_388_608L
+
     fun matches(
         display: DisplayRef?,
         captureSessionHi: Long,
