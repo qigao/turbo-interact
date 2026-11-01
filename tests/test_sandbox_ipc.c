@@ -79,9 +79,9 @@ static void owner_create(fixture *f) {
 #include <errno.h>
 #include <fcntl.h>
 
-static void ipc_open(fixture *f, const char *private_dir) {
+static void ipc_open_with_uid(fixture *f, const char *private_dir, uint32_t peer_uid) {
     ti_sandbox_ipc_config_v1 c = TI_SANDBOX_IPC_CONFIG_V1_INIT;
-    c.peer_uid = (uint32_t)geteuid();
+    c.peer_uid = peer_uid;
     c.provider_id = 17u;
     c.allowed_tools = TI_SANDBOX_PHONE_TAP | TI_SANDBOX_PHONE_BACK;
     c.task_id = 100u;
@@ -94,6 +94,10 @@ static void ipc_open(fixture *f, const char *private_dir) {
     c.display.geometry_generation = 1u;
     c.action_owner = f->owner;
     assert(ti_sandbox_ipc_open(&c, private_dir, &f->ipc) == TI_OK);
+}
+
+static void ipc_open(fixture *f, const char *private_dir) {
+    ipc_open_with_uid(f, private_dir, (uint32_t)geteuid());
 }
 
 static int client_connect(const char *path) {
@@ -253,6 +257,31 @@ static void test_real_unix_socket_and_authorization(void) {
     assert(rmdir(dir) == 0);
 }
 
+static void test_wrong_actual_kernel_peer_is_rejected(void) {
+    fixture f = {0};
+    char dir[] = "/tmp/ti-uid-XXXXXX";
+    char path[TI_SANDBOX_IPC_PATH_CAP];
+    char token[TI_SANDBOX_IPC_TOKEN_HEX_CAP];
+    char body[1024];
+    uint32_t mismatched_uid = (uint32_t)geteuid() + 1u;
+    assert(mkdtemp(dir) != NULL);
+    assert(chmod(dir, 0700) == 0);
+    assert(mismatched_uid != (uint32_t)geteuid());
+    owner_create(&f);
+    /* The OS-reported UID is the real process UID. The host-pinned expected
+     * value must NEVER be read from a JSON field or the model request. */
+    ipc_open_with_uid(&f, dir, mismatched_uid);
+    assert(ti_sandbox_ipc_credentials(f.ipc, path, sizeof(path),
+        token, sizeof(token)) == TI_OK);
+    f.permit = 1u; /* Even an allow-all test host cannot bypass the OS UID. */
+    tap_json(body, sizeof(body), token, 1u, 5u, 1u, 1u);
+    transaction(f.ipc, path, body, TI_EAUTH);
+    assert(f.grants == 0u && f.effects == 0u);
+    assert(ti_sandbox_ipc_destroy(&f.ipc) == TI_OK);
+    assert(ti_action_owner_destroy(&f.owner) == TI_OK);
+    assert(rmdir(dir) == 0);
+}
+
 static void test_directory_must_be_private(void) {
     fixture f = {0};
     ti_sandbox_ipc_config_v1 c = TI_SANDBOX_IPC_CONFIG_V1_INIT;
@@ -300,6 +329,7 @@ static void test_windows_has_explicit_unsupported_local_socket(void) {
 int main(void) {
 #if !defined(_WIN32)
     test_real_unix_socket_and_authorization();
+    test_wrong_actual_kernel_peer_is_rejected();
     test_directory_must_be_private();
 #else
     test_windows_has_explicit_unsupported_local_socket();
