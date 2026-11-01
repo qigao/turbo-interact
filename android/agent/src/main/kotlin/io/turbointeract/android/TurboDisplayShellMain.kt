@@ -51,7 +51,13 @@ internal class RemoteDisplayAdmission(
 
     private inline fun permit(block: (ITurboDisplayAuthority) -> Boolean): Boolean {
         val current = authority ?: return false
+        // These calls originate while serving an incoming App→Shell Binder
+        // transaction. Clear that caller identity before the nested Shell→App
+        // callback so the host sees THIS helper's uid/pid (2000, own PID),
+        // not the originating App's identity.
+        val token = Binder.clearCallingIdentity()
         return try { block(current) } catch (_: Exception) { false }
+        finally { Binder.restoreCallingIdentity(token) }
     }
 }
 
