@@ -78,7 +78,11 @@ object ShellHandoffProof {
  * ADB exec session's stdin, never argv or an installable shell script.
  * The caller owns ADB permission/pairing; this class never opens adbd.
  */
-data class ShellLaunchSpec(val command: String, val nonceLine: String)
+data class ShellLaunchSpec(val command: String, val nonceLine: String) {
+    // nonceLine is a one-use secret. Data-class default toString would leak
+    // it into exception/log output before the authenticated ADB handoff.
+    override fun toString(): String = "ShellLaunchSpec(<redacted>)"
+}
 
 object ShellLaunchCommand {
     const val HELPER_CLASS = "io.turbointeract.android.TurboDisplayShellMain"
