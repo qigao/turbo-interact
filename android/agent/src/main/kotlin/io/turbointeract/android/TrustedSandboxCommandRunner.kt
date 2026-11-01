@@ -28,9 +28,11 @@ data class TrustedSandboxCommand(
     companion object {
         /**
          * Construct exactly the existing C11 worker's one-shot argv from a
-         * typed, already source-bound SANDBOX/SCRIPT action. The socket server
-         * independently rechecks the live C11 owner/DisplayRef, peer UID and
-         * task-scoped token; these argv values are NOT authority.
+         * typed, already source-bound SANDBOX action. The C11 Socket server
+         * intentionally forces origin=SANDBOX regardless of argv: passing a
+         * SCRIPT origin here would misrepresent which policy is consulted.
+         * It independently rechecks the live C11 owner/DisplayRef, peer UID
+         * and task-scoped token; these argv values are NOT authority.
          */
         fun forSandboxAction(
             action: NativeInputAction,
@@ -38,8 +40,9 @@ data class TrustedSandboxCommand(
             taskId: Long,
             sandboxRunId: Long,
         ): TrustedSandboxCommand {
-            require(action.origin == NativeInputAction.SANDBOX ||
-                action.origin == NativeInputAction.SCRIPT)
+            require(action.origin == NativeInputAction.SANDBOX) {
+                "the native socket server fixes worker origin to SANDBOX"
+            }
             require(callId > 0L && taskId > 0L && sandboxRunId > 0L)
             val kind = when (action.kind) {
                 NativeInputAction.TAP -> "tap"
