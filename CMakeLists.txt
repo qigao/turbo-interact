@@ -43,7 +43,8 @@ if(TI_WITH_TURBOMEDIA_STREAMGRAPH)
     message(FATAL_ERROR "Actual TurboMedia::StreamGraph target unavailable")
   endif()
   add_library(turbo_interact_streamgraph_bridge STATIC
-    src/streamgraph_bridge.c)
+    src/streamgraph_bridge.c
+    src/m17e_fact.c)
   add_library(TurboInteract::StreamGraphBridge ALIAS
     turbo_interact_streamgraph_bridge)
   set_target_properties(turbo_interact_streamgraph_bridge PROPERTIES
@@ -59,6 +60,7 @@ if(TI_WITH_TURBOMEDIA_STREAMGRAPH)
   install(TARGETS turbo_interact_streamgraph_bridge
     EXPORT TurboInteractTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
   install(FILES include/turbo_interact/streamgraph_bridge.h
+                include/turbo_interact/m17e_fact.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/turbo_interact)
 endif()
 
@@ -67,7 +69,8 @@ install(TARGETS turbo_interact_core EXPORT TurboInteractTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/turbo_interact DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  PATTERN "streamgraph_bridge.h" EXCLUDE)
+  PATTERN "streamgraph_bridge.h" EXCLUDE
+  PATTERN "m17e_fact.h" EXCLUDE)
 install(EXPORT TurboInteractTargets FILE TurboInteractTargets.cmake
   NAMESPACE TurboInteract:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TurboInteract)
 configure_package_config_file(cmake/TurboInteractConfig.cmake.in

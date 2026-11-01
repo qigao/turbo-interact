@@ -6,6 +6,7 @@
  * into TurboInteract as a production implementation. No device or sockets.
  */
 #include "turbo_interact/streamgraph_bridge.h"
+#include "turbo_interact/m17e_fact.h"
 #include <turbo_streamgraph_executor.h>
 #include <turbo_streamgraph_h264.h>
 #include <turbo_codec.h>
@@ -202,13 +203,16 @@ static void m17_complete_from_real_worker(tm_pc_portal *portal,
     assert(worker.result==TM_PC_OK);
     if (pixels) assert(worker.observed_digest==expected);
 }
-static ti_sg_analysis_terminal_v1 m17_take_terminal(ti_bridge *bridge,
-                                                     uint64_t event_id,
-                                                     uint32_t outcome) {
+static ti_sg_analysis_terminal_v1 m17_take_terminal(
+    ti_sg_bridge_context_v1 *ctx,ti_bridge *bridge,
+    uint64_t event_id,uint32_t outcome) {
     ti_bridge_ticket_v1 taken={0};
     ti_bridge_event_v1 event=TI_BRIDGE_EVENT_V1_INIT;
     ti_sg_analysis_terminal_v1 value={0};
-    size_t bytes=0u;
+    ti_m17e_terminal_fact_v1 fact=TI_M17E_TERMINAL_FACT_V1_INIT;
+    ti_m17e_terminal_fact_v1 recovered=TI_M17E_TERMINAL_FACT_V1_INIT;
+    uint8_t wire[TI_M17E_TERMINAL_WIRE_BYTES]={0};
+    size_t bytes=0u,wire_bytes=0u;
     assert(ti_bridge_take(bridge,&taken,&event)==TI_OK);
     assert(event.header.kind==TI_EVENT_ANALYSIS_RESULT &&
            event.header.event_id==event_id &&
@@ -228,7 +232,31 @@ static ti_sg_analysis_terminal_v1 m17_take_terminal(ti_bridge *bridge,
            value.capture_session_lo==99u &&
            value.pts==0u && value.dts==0u &&
            value.timebase_num==1u && value.timebase_den==1000000u);
+    /* Converting an ACTUAL TAKEN Provider terminal to a stable 160-byte
+     * Flow/SCXML fact must not serialize raw FrameRef/pointer/padding. */
+    assert(ti_m17e_terminal_fact_from_taken(ctx,bridge,taken,3u,55u,67u,
+                                             &fact)==TI_OK);
+    assert(fact.correlation==event_id-10u && fact.event_id==event_id);
+    assert(fact.outcome==outcome && fact.provider_status==value.provider_status);
+    assert(fact.source_session_generation==77u &&
+           fact.device_session_id==43u && fact.geometry_generation==5u);
+    assert(ti_m17e_terminal_fact_encode(&fact,wire,sizeof(wire),
+                                          &wire_bytes)==TI_OK);
+    assert(wire_bytes==160u && memcmp(wire,"TIFA",4u)==0 &&
+           wire[6]==0u && wire[7]==160u);
+    assert(ti_m17e_terminal_fact_decode(wire,wire_bytes,&recovered)==TI_OK);
+    assert(recovered.event_id==fact.event_id &&
+           recovered.correlation==fact.correlation &&
+           recovered.packet_sequence==fact.packet_sequence &&
+           recovered.provider_status==fact.provider_status &&
+           recovered.outcome==fact.outcome);
+    wire[156]=1u; /* reserved bits MUST NOT be silently carried to Flow */
+    assert(ti_m17e_terminal_fact_decode(wire,sizeof(wire),&recovered)==TI_ECONFLICT);
+    wire[156]=0u;
+    assert(ti_m17e_terminal_fact_decode(wire,sizeof(wire)-1u,&recovered)==TI_ECONFLICT);
     assert(ti_bridge_settle(bridge,taken)==TI_OK);
+    assert(ti_m17e_terminal_fact_from_taken(ctx,bridge,taken,3u,55u,67u,
+                                             &recovered)==TI_ESTALE);
     assert(ti_bridge_settle(bridge,taken)==TI_ESTALE);
     return value;
 }
@@ -406,7 +434,7 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
     assert(tm_od_step_completion(media_owner,&terminal)==TM_OD_OK);
     assert(terminal.correlation==11u &&
            terminal.outcome==TM_PC_COMPLETED);
-    outcome=m17_take_terminal(f.bridge,21u,TM_PC_COMPLETED);
+    outcome=m17_take_terminal(&f.ctx,f.bridge,21u,TM_PC_COMPLETED);
     assert(outcome.provider_status==0 && entries[0].attempted==1u);
 
     /* Cancellation wins before callback completion: terminal is CANCELLED,
@@ -426,7 +454,7 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
     assert(terminal.correlation==12u &&
            terminal.outcome==TM_PC_CANCELLED &&
            terminal.completion_observed==1u);
-    outcome=m17_take_terminal(f.bridge,22u,TM_PC_CANCELLED);
+    outcome=m17_take_terminal(&f.ctx,f.bridge,22u,TM_PC_CANCELLED);
     assert(outcome.provider_status==99 && entries[1].attempted==1u);
 
     /* A fresh Portal ticket with an OLD correlation MUST NOT emit another
