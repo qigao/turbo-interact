@@ -37,6 +37,65 @@ internal object OwnedDisplayReply {
  * Display creation is allowed only if the host's separate LIVE session-control
  * grant accepts it. An invalid Binder reply is fatal, not silently remapped.
  */
+/**
+ * Only this bridge calls createDisplay and interprets its returned Binder
+ * identity. An invalid/partial response revokes the whole Shell: never
+ * release a possibly unrelated display based on untrusted numeric IDs.
+ */
+internal object AuthorizedDisplaySurfaceCreator {
+    fun create(
+        connection: AuthorizedShellConnection,
+        surface: android.view.Surface,
+        geometry: DisplayGeometry,
+        deviceSessionId: Long,
+        sessionGeneration: Long,
+    ): DisplaySnapshot {
+        require(deviceSessionId > 0 && sessionGeneration > 0)
+        require(geometry.rotationQuarterTurns == 0 &&
+            geometry.width in 1..4096 && geometry.height in 1..4096 &&
+            geometry.width.toLong() * geometry.height <= 8_388_608L)
+        val shell = connection.shell
+        val reply = try {
+            shell.createDisplay(surface, geometry.width, geometry.height, geometry.densityDpi)
+        } catch (failure: Throwable) {
+            try { connection.close() }
+            catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+            throw failure
+        }
+        val ref = try {
+            OwnedDisplayReply.accept(
+                deviceSessionId, sessionGeneration,
+                reply.getInt("status", -2),
+                reply.getLong("deviceSessionId", 0L),
+                reply.getLong("sessionGeneration", 0L),
+                reply.getInt("displayId", 0),
+                reply.getLong("displayGeneration", 0L),
+                reply.getLong("geometryGeneration", 0L),
+            )
+        } catch (_: Exception) { null }
+        if (ref == null) {
+            val failure = IllegalStateException(
+                "authenticated Shell returned an invalid display incarnation")
+            try { connection.close() }
+            catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+            throw failure
+        }
+        return DisplaySnapshot(ref, geometry)
+    }
+
+    fun releaseExactOrRevoke(
+        connection: AuthorizedShellConnection,
+        ref: DisplayRef,
+    ): Boolean {
+        val released = runCatching {
+            connection.shell.releaseDisplay(ref.displayId, ref.displayGeneration)
+        }.getOrDefault(false)
+        if (!released) runCatching { connection.close() }
+        return released
+    }
+}
+
+/** Owns no display itself; the authenticated Shell keeps authoritative IDs. */
 object AuthorizedRgbaDisplayCreator {
     fun create(
         connection: AuthorizedShellConnection,
@@ -45,53 +104,15 @@ object AuthorizedRgbaDisplayCreator {
         deviceSessionId: Long,
         sessionGeneration: Long,
     ): DisplaySnapshot {
-        require(deviceSessionId > 0 && sessionGeneration > 0)
         require(geometry.width == capture.width && geometry.height == capture.height)
-        require(geometry.rotationQuarterTurns == 0) {
-            "rotated display requires a separately created capture incarnation"
-        }
-        val shell = connection.shell
-        val reply = try {
-            shell.createDisplay(capture.surface,
-                geometry.width, geometry.height, geometry.densityDpi)
-        } catch (failure: Throwable) {
-            // The remote process might already have created a display before
-            // its Binder reply failed. Revoke the WHOLE authenticated session
-            // to release its owned resources; never guess a display ID.
-            try { connection.close() }
-            catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
-            throw failure
-        }
-        val displayId = reply.getInt("displayId", 0)
-        val displayGeneration = reply.getLong("displayGeneration", 0L)
-        val ref = OwnedDisplayReply.accept(
-            deviceSessionId, sessionGeneration,
-            reply.getInt("status", -2),
-            reply.getLong("deviceSessionId", 0L),
-            reply.getLong("sessionGeneration", 0L),
-            displayId, displayGeneration, reply.getLong("geometryGeneration", 0L),
-        )
-        if (ref == null) {
-            // Invalid/partial replies cannot establish ownership, including
-            // a returned display ID which could refer to some OTHER live
-            // display. Never invoke releaseDisplay on that untrusted pair.
-            // Close the authenticated Shell session instead; it owns the
-            // actual display registry and releases ALL of its resources.
-            val failure = IllegalStateException(
-                "authenticated Shell returned an invalid display incarnation"
-            )
-            try { connection.close() }
-            catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
-            throw failure
-        }
-        val snapshot = DisplaySnapshot(ref, geometry)
+        val snapshot = AuthorizedDisplaySurfaceCreator.create(
+            connection, capture.surface, geometry, deviceSessionId, sessionGeneration)
         try {
             capture.bindDisplay(snapshot)
             return snapshot
         } catch (failure: Throwable) {
-            // Avoid publishing a display whose capture source was not bound.
-            try { shell.releaseDisplay(ref.displayId, ref.displayGeneration) }
-            catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+            AuthorizedDisplaySurfaceCreator.releaseExactOrRevoke(
+                connection, snapshot.ref)
             throw failure
         }
     }
