@@ -1,0 +1,260 @@
+{
+  "source": "https://github.com/wangzan101/Mika",
+  "commit": "279a5cae405ac83106b47af9c2794ebfa3333a57",
+  "license": "Apache-2.0",
+  "mode": "verbatim selective reference; no runtime integration",
+  "files": [
+    {
+      "path": "app/src/androidTest/java/com/wangzan101/mika/cap/phone/a11y/A11yOnDisplayTest.kt",
+      "upstream_blob_sha": "0ab9676cd064d3d2fb56c39ce18bb40ea4a2a925",
+      "imported_blob_sha": "0ab9676cd064d3d2fb56c39ce18bb40ea4a2a925",
+      "size_bytes": 8376,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/androidTest/java/com/wangzan101/mika/cap/phone/display/AgentDisplayTest.kt",
+      "upstream_blob_sha": "0b8856eff3e1f17dfed82ec3be1e67cfd9bcd539",
+      "imported_blob_sha": "0b8856eff3e1f17dfed82ec3be1e67cfd9bcd539",
+      "size_bytes": 11038,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/aidl/com/wangzan101/mika/shell/IMikaShell.aidl",
+      "upstream_blob_sha": "38ba0714e2a9f3f27abe8d4d24f24e606fd534f3",
+      "imported_blob_sha": "38ba0714e2a9f3f27abe8d4d24f24e606fd534f3",
+      "size_bytes": 8509,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/a11y/AndroidScreen.kt",
+      "upstream_blob_sha": "5870f46cacc30adc024fa149ccbc2ea6affb60dd",
+      "imported_blob_sha": "5870f46cacc30adc024fa149ccbc2ea6affb60dd",
+      "size_bytes": 110244,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/a11y/NodeIds.kt",
+      "upstream_blob_sha": "2bc48da4947563e0f9f971b57986426972e9352c",
+      "imported_blob_sha": "2bc48da4947563e0f9f971b57986426972e9352c",
+      "size_bytes": 2104,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/a11y/PhoneOcr.kt",
+      "upstream_blob_sha": "82fc47d3354f3aeb0dc8f94a4355fccf218251a6",
+      "imported_blob_sha": "82fc47d3354f3aeb0dc8f94a4355fccf218251a6",
+      "size_bytes": 3649,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/a11y/ScreenAccessibility.kt",
+      "upstream_blob_sha": "84bfd6f75d9408391d46cfcf2887696616e6da15",
+      "imported_blob_sha": "84bfd6f75d9408391d46cfcf2887696616e6da15",
+      "size_bytes": 10518,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/a11y/ScreenReader.kt",
+      "upstream_blob_sha": "aee711f19912bdb595e04a5fc673f49363e92f36",
+      "imported_blob_sha": "aee711f19912bdb595e04a5fc673f49363e92f36",
+      "size_bytes": 15658,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/a11y/StillFrameRead.kt",
+      "upstream_blob_sha": "c9d0bc291026861fc6a95525113826d995c688be",
+      "imported_blob_sha": "c9d0bc291026861fc6a95525113826d995c688be",
+      "size_bytes": 1988,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/display/AgentDisplay.kt",
+      "upstream_blob_sha": "43fca650329848e55d6b19a13efb9260f117bdc8",
+      "imported_blob_sha": "43fca650329848e55d6b19a13efb9260f117bdc8",
+      "size_bytes": 5062,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/display/FrameMath.kt",
+      "upstream_blob_sha": "0541cd72a1b8746127f0439a900e47b6aad75d26",
+      "imported_blob_sha": "0541cd72a1b8746127f0439a900e47b6aad75d26",
+      "size_bytes": 2698,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/display/LazyDisplay.kt",
+      "upstream_blob_sha": "7f4b8a64d908a789cad62d6b9213ba1235517864",
+      "imported_blob_sha": "7f4b8a64d908a789cad62d6b9213ba1235517864",
+      "size_bytes": 956,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/ActivityQuery.kt",
+      "upstream_blob_sha": "16ca099803ba8c7e9fe9694600153b7ab6ce8a47",
+      "imported_blob_sha": "16ca099803ba8c7e9fe9694600153b7ab6ce8a47",
+      "size_bytes": 1483,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/AudioMuteLedger.kt",
+      "upstream_blob_sha": "54f63aa1d1acce7d825b932eb3dd57de986ed791",
+      "imported_blob_sha": "54f63aa1d1acce7d825b932eb3dd57de986ed791",
+      "size_bytes": 3181,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/BuiltinShellConnection.kt",
+      "upstream_blob_sha": "88771671af587fc48fde684c764652e3123732d4",
+      "imported_blob_sha": "88771671af587fc48fde684c764652e3123732d4",
+      "size_bytes": 1288,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/ColdStart.kt",
+      "upstream_blob_sha": "ef88ca888e5db9db73ddceb98bb2c2b7b3322ac0",
+      "imported_blob_sha": "ef88ca888e5db9db73ddceb98bb2c2b7b3322ac0",
+      "size_bytes": 595,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/HelperHub.kt",
+      "upstream_blob_sha": "0a952d4668e85b9d1cf37a1eab27cc727797df86",
+      "imported_blob_sha": "0a952d4668e85b9d1cf37a1eab27cc727797df86",
+      "size_bytes": 7815,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/HelperProcess.kt",
+      "upstream_blob_sha": "f66dda6ba31f8b5670158f5eae4da221ccccd6f7",
+      "imported_blob_sha": "f66dda6ba31f8b5670158f5eae4da221ccccd6f7",
+      "size_bytes": 17260,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/MainScreenLog.kt",
+      "upstream_blob_sha": "344183f944b0a0cca8e86204e80864619a811906",
+      "imported_blob_sha": "344183f944b0a0cca8e86204e80864619a811906",
+      "size_bytes": 3100,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/MainScreenWatch.kt",
+      "upstream_blob_sha": "4a96aca871fd06790b75232e2c030ffced5fed7b",
+      "imported_blob_sha": "4a96aca871fd06790b75232e2c030ffced5fed7b",
+      "size_bytes": 6998,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/ShareIntent.kt",
+      "upstream_blob_sha": "79cabc1f8f091661d973c211bd5488eea61dd6f7",
+      "imported_blob_sha": "79cabc1f8f091661d973c211bd5488eea61dd6f7",
+      "size_bytes": 1020,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/ShellBinding.kt",
+      "upstream_blob_sha": "e86c1f4ab3b43e0e0e6ac8af82f712d4eb0902ff",
+      "imported_blob_sha": "e86c1f4ab3b43e0e0e6ac8af82f712d4eb0902ff",
+      "size_bytes": 709,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/ShellClip.kt",
+      "upstream_blob_sha": "5451e2c74d707e664efe6236462087381a534782",
+      "imported_blob_sha": "5451e2c74d707e664efe6236462087381a534782",
+      "size_bytes": 1856,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/ShellClipboard.kt",
+      "upstream_blob_sha": "867ff328818fe4427ce4b1dbfaf49f694f11de28",
+      "imported_blob_sha": "867ff328818fe4427ce4b1dbfaf49f694f11de28",
+      "size_bytes": 4369,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/ShellContext.kt",
+      "upstream_blob_sha": "40fff260f6838f799dd5f76fc3adf0d4e23c3076",
+      "imported_blob_sha": "40fff260f6838f799dd5f76fc3adf0d4e23c3076",
+      "size_bytes": 4136,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/ShellLinks.kt",
+      "upstream_blob_sha": "2d8cc6c32e67efbb6d8d222e94a8381db5fb0c00",
+      "imported_blob_sha": "2d8cc6c32e67efbb6d8d222e94a8381db5fb0c00",
+      "size_bytes": 801,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/ShellService.kt",
+      "upstream_blob_sha": "68304a1f49e4e16ab1bb56c45793be77235b3344",
+      "imported_blob_sha": "68304a1f49e4e16ab1bb56c45793be77235b3344",
+      "size_bytes": 63427,
+      "exact_match": true
+    },
+    {
+      "path": "app/src/main/java/com/wangzan101/mika/cap/phone/shell/SystemIntents.kt",
+      "upstream_blob_sha": "d056a6f06f665618f0b359af58d7c8d4ae10366f",
+      "imported_blob_sha": "d056a6f06f665618f0b359af58d7c8d4ae10366f",
+      "size_bytes": 4696,
+      "exact_match": true
+    },
+    {
+      "path": "core/src/main/kotlin/com/wangzan101/mika/core/shell/HelperHandoff.kt",
+      "upstream_blob_sha": "862508aa2b010f68e85c965cd64656b5ca96d143",
+      "imported_blob_sha": "862508aa2b010f68e85c965cd64656b5ca96d143",
+      "size_bytes": 11415,
+      "exact_match": true
+    },
+    {
+      "path": "core/src/main/kotlin/com/wangzan101/mika/core/shell/HelperLink.kt",
+      "upstream_blob_sha": "ce0c5fda8c6248c995e9077154444ef921b15378",
+      "imported_blob_sha": "ce0c5fda8c6248c995e9077154444ef921b15378",
+      "size_bytes": 2420,
+      "exact_match": true
+    },
+    {
+      "path": "core/src/main/kotlin/com/wangzan101/mika/core/uistate/AppCopies.kt",
+      "upstream_blob_sha": "de53ce62f936d1936e8a4657ec0ad3e8ef02f2d0",
+      "imported_blob_sha": "de53ce62f936d1936e8a4657ec0ad3e8ef02f2d0",
+      "size_bytes": 8048,
+      "exact_match": true
+    },
+    {
+      "path": "core/src/main/kotlin/com/wangzan101/mika/core/uistate/PressKeys.kt",
+      "upstream_blob_sha": "80697d386995fcff8f99702a0a36f4e9c702c5ef",
+      "imported_blob_sha": "80697d386995fcff8f99702a0a36f4e9c702c5ef",
+      "size_bytes": 1233,
+      "exact_match": true
+    },
+    {
+      "path": "core/src/main/kotlin/com/wangzan101/mika/core/uistate/UiTree.kt",
+      "upstream_blob_sha": "d7c8e51ad991474166402e6e0002c1bf25278ab1",
+      "imported_blob_sha": "d7c8e51ad991474166402e6e0002c1bf25278ab1",
+      "size_bytes": 1519,
+      "exact_match": true
+    },
+    {
+      "path": "LICENSE",
+      "upstream_blob_sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "imported_blob_sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "size_bytes": 11358,
+      "exact_match": true
+    },
+    {
+      "path": "NOTICE",
+      "upstream_blob_sha": "a993d60af679c537beef9c484e7fd9b9f6aa3ada",
+      "imported_blob_sha": "a993d60af679c537beef9c484e7fd9b9f6aa3ada",
+      "size_bytes": 31,
+      "exact_match": true
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "upstream_blob_sha": "2cbb80b2bfe45996293d3b8484f83a021dbcec31",
+      "imported_blob_sha": "2cbb80b2bfe45996293d3b8484f83a021dbcec31",
+      "size_bytes": 10584,
+      "exact_match": true
+    }
+  ]
+}

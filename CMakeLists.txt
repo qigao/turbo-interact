@@ -24,6 +24,41 @@ target_include_directories(turbo_interact_core PUBLIC
 # Product C11 builds use Clang/LLVM; MSVC/GCC are not release toolchains.
 target_compile_options(turbo_interact_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
+# One-shot trusted worker is a PRODUCT native executable (not a consumer).
+# AGP builds executable targets but does NOT package them into the AAR by
+# default: packaging/installed nativeLibraryDir execution is a separate gate.
+if(UNIX OR ANDROID)
+  add_executable(turbo_interact_sandbox_worker src/sandbox_worker.c)
+  set_target_properties(turbo_interact_sandbox_worker PROPERTIES
+    OUTPUT_NAME libturbo_interact_sandbox_worker.so
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  target_compile_options(turbo_interact_sandbox_worker PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  if(ANDROID)
+    # Deterministic, ABI-scoped PRODUCT executable path for the single AAR
+    # packaging pipeline. AGP normally omits add_executable outputs.
+    if(NOT ANDROID_ABI OR NOT CMAKE_BUILD_TYPE)
+      message(FATAL_ERROR "Android sandbox worker requires ABI and build type")
+    endif()
+    set_target_properties(turbo_interact_sandbox_worker PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY
+        "${CMAKE_CURRENT_SOURCE_DIR}/android/agent/build/trustedWorkerBinaries/${CMAKE_BUILD_TYPE}/${ANDROID_ABI}")
+  endif()
+endif()
+
+# Android JNI is part of the production Android AAR, linked to the same
+# TurboInteract::Core C11 owner; never a separate execution engine.
+if(ANDROID)
+  set_target_properties(turbo_interact_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  add_library(turbo_interact_android_jni SHARED
+    android/agent/src/main/cpp/native_action_owner_jni.c)
+  target_link_libraries(turbo_interact_android_jni PRIVATE TurboInteract::Core)
+  set_target_properties(turbo_interact_android_jni PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  target_compile_options(turbo_interact_android_jni PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 install(TARGETS turbo_interact_core EXPORT TurboInteractTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -62,7 +97,13 @@ if(BUILD_TESTING)
 
   add_executable(ti_sandbox_ipc_test tests/test_sandbox_ipc.c)
   target_link_libraries(ti_sandbox_ipc_test PRIVATE TurboInteract::Core)
+  if(TARGET turbo_interact_sandbox_worker)
+    target_compile_definitions(ti_sandbox_ipc_test PRIVATE
+      TI_TRUSTED_WORKER_PATH="$<TARGET_FILE:turbo_interact_sandbox_worker>")
+    add_dependencies(ti_sandbox_ipc_test turbo_interact_sandbox_worker)
+  endif()
   add_test(NAME ti_sandbox_ipc_test COMMAND ti_sandbox_ipc_test)
+  set_tests_properties(ti_sandbox_ipc_test PROPERTIES TIMEOUT 15)
 
   add_executable(ti_android_shell_backend_test tests/test_android_shell_backend.c)
   target_link_libraries(ti_android_shell_backend_test PRIVATE TurboInteract::Core)

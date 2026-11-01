@@ -1,0 +1,74 @@
+name: Android device library
+
+on:
+  pull_request:
+    paths:
+      - 'android/agent/**'
+      - 'android/dependencies.toml'
+      - 'android/settings.gradle.kts'
+      - 'CMakeLists.txt'
+      - 'include/**'
+      - 'src/**'
+      - '.github/workflows/android-agent.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'android/agent/**'
+      - 'android/dependencies.toml'
+      - 'android/settings.gradle.kts'
+      - 'CMakeLists.txt'
+      - 'include/**'
+      - 'src/**'
+      - '.github/workflows/android-agent.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: android-library-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  android-library:
+    name: Assemble and unit-test Android device library
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 21 (SimpleDSL plugin runtime)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+      - name: Install Android compile platform
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Set up Gradle 9.1.0
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+      - name: Compile production library and run JVM unit tests via SimpleDSL
+        working-directory: android
+        run: gradle --no-daemon --stacktrace :agent:assembleDebug :agent:testDebugUnitTest
+      - name: Verify published AAR contains both native product binaries in all four ABIs
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          aar=agent/build/outputs/aar/agent-debug.aar
+          test -f "$aar"
+          contents="$(jar tf "$aar")"
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            grep -Fxq "jni/$abi/libturbo_interact_android_jni.so" <<< "$contents"
+            grep -Fxq "jni/$abi/libturbo_interact_sandbox_worker.so" <<< "$contents"
+          done
+          # This class is only loaded by app_process using its literal name.
+          # A green AAR with stripped/renamed ShellMain cannot launch on an
+          # R8-minified installed host APK. Verify the REAL AAR's consumer rules,
+          # not a new consumer/test project.
+          grep -Fxq 'proguard.txt' <<< "$contents"
+          rules="$(unzip -p "$aar" proguard.txt)"
+          grep -Fq -- '-keep class io.turbointeract.android.TurboDisplayShellMain' <<< "$rules"
+          grep -Fq -- 'public static void main(java.lang.String[]);' <<< "$rules"

@@ -1,0 +1,85 @@
+plugins {
+    id 'io.github.qigao.simpledsl.android'
+}
+
+simpledsl {
+    androidLibrary {
+        namespace = 'io.turbointeract.android'
+    }
+}
+
+// AGP 9 disables AIDL by default. The production Binder interface requires it.
+android {
+    buildFeatures {
+        aidl = true
+    }
+    ndkVersion '27.2.12479018'
+    defaultConfig {
+        // Product AAR R8 metadata: preserve JNI-exported names after host shrink.
+        consumerProguardFiles 'jni-keep.pro'
+        externalNativeBuild {
+            cmake {
+                targets 'turbo_interact_android_jni', 'turbo_interact_sandbox_worker'
+                arguments '-DBUILD_TESTING=OFF'
+            }
+        }
+    }
+    // Reuse the existing C11 product root CMake; no separate JNI probe target.
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
+
+/*
+ * AGP builds native executables but omits them from AAR packaging by default.
+ * Android 10+ refuses app-writable executable files: package the PIE worker
+ * as a lib*.so-named executable under the installed nativeLibraryDir.
+ */
+abstract class StageTrustedSandboxWorker extends DefaultTask {
+    @InputDirectory
+    @PathSensitive(PathSensitivity.RELATIVE)
+    abstract DirectoryProperty getCompiledDirectory()
+
+    @OutputDirectory
+    abstract DirectoryProperty getStagedDirectory()
+
+    @TaskAction
+    void stage() {
+        def source = compiledDirectory.get().asFile
+        def destination = stagedDirectory.get().asFile
+        project.delete(destination)
+        ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'].each { abi ->
+            def worker = new File(source, "${abi}/libturbo_interact_sandbox_worker.so")
+            if (!worker.isFile()) {
+                throw new GradleException("Missing compiled PIE worker: ${worker}")
+            }
+            def output = new File(destination, "${abi}/libturbo_interact_sandbox_worker.so")
+            if (!output.parentFile.mkdirs() && !output.parentFile.isDirectory()) {
+                throw new GradleException("Cannot create native worker AAR directory: ${output.parentFile}")
+            }
+            java.nio.file.Files.copy(worker.toPath(), output.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        def capitalized = variant.name.capitalize()
+        def stageTask = tasks.register(
+                "stage${capitalized}TrustedSandboxWorker", StageTrustedSandboxWorker) {
+            dependsOn("externalNativeBuild${capitalized}")
+            compiledDirectory.set(layout.buildDirectory.dir("trustedWorkerBinaries/${capitalized}"))
+            stagedDirectory.set(layout.buildDirectory.dir(
+                    "generated/trustedWorkerJni/${variant.name}"))
+        }
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(stageTask) { it.stagedDirectory }
+    }
+}

@@ -1,0 +1,8 @@
+# SimpleDSL 0.3.0 repository policy (Android backend).
+# Build plugin/runtime: Java 21, Gradle 9.1.0, AGP 9.0.1 / built-in Kotlin.
+# min-sdk is the Android library's compatibility floor, not the virtual display
+# runtime capability floor (Android 14+ is enforced by AndroidVirtualDisplayOwner).
+[simpledsl.android]
+java = 21
+compile-sdk = 36
+min-sdk = 30

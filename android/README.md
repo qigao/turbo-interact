@@ -1,0 +1,204 @@
+# TurboInteract Android interactive VirtualDisplay agent
+
+**Draft implementation, not qualified on a physical Android device.** Based on [Mika pinned import](../third_party/mika/README.md) (Apache-2.0) and scrcpy's MediaCodec InputSurface model. This is a **production Android library**, not an installer or a consumer/probe test app.
+
+## Code ownership
+
+| Source | Owner and behavior | Status |
+| --- | --- | --- |
+| `DisplayRegistry` | Session-scoped DisplayRef, numeric ID reuse, geometry generation; display 0 always invalid | JVM test and actual Android library compile |
+| `AndroidVirtualDisplayOwner` | Android 14+ shell VirtualDisplay + OWN_FOCUS + anti-focus-steal flags; local IME request and exact release; 2-display budget | SDK source compiled, no real-device proof |
+| `AndroidRgbaCapture` | ImageReader RGBA latest-frame sampling with copied Bitmap and local capture sequence | SDK compiled; on-device rendering unverified |
+| `AndroidH264Capture` | Hardware MediaCodec InputSurface encoder, copied H.264 buffers, bounded packet queue and explicit FAIL on full queue | Android AAR build passed; no transport/protocol or device test yet |
+| `AndroidSdkInput` | Display-owner + admission guard, double replay prevention, touch and limited BACK/ENTER; no implicit main/ADB fallback | SDK compiled, no real device |
+| `AndroidShellAppLauncher` | Activity launch on Display N, main-screen/other-display App conflict and attempt replay refusal | SDK compiled, actual task behavior pending |
+| `AndroidShellContext` | UID 2000 shell package attribution/ActivityThread context | Android AAR build passed; no trusted bootstrap yet |
+| `ITurboDisplayShell.aidl` + `AuthenticatedDisplayShell` | Narrow Binder surface, caller-UID checks and explicit `ShellAdmission` on external effects | AAR compiled; actual device Binder handoff unverified |
+| `NativeAndroidActionOwner` + `turbo_interact_android_jni` | Single C11 host authority, live grant, in-flight ticket confirmation, exact geometry and tap/BACK dispatch | **Android NDK AAR build qualified for arm64-v8a, armeabi-v7a, x86_64, x86; real IPC unverified** |
+
+## Build and test
+
+From `android/`, using the **released SimpleDSL 0.3.0** settings/Android plugins, JDK 21, Gradle 9.1.0 and Android SDK 36.
+
+The single repository policy `android/dependencies.toml` specifies Android Java 21, compileSdk 36 and minSdk 30. SimpleDSL manages AGP 9.0.1 with built-in Kotlin (2.2.10); `:agent` uses `simpledsl { androidLibrary { namespace = 'io.turbointeract.android' } }` and explicitly sets `android.buildFeatures.aidl = true`. There is **no** `org.jetbrains.kotlin.android` plugin, duplicate AGP version or separate consumer project.
+
+
+
+```sh
+gradle --no-daemon :agent:assembleDebug :agent:testDebugUnitTest
+```
+
+CI: [Android device library](../.github/workflows/android-agent.yml). It compiles the actual product AAR, generated AIDL, NDK/JNI shared library for four Android ABIs and runs JUnit tests for display generation, attempt replay, and launch policy. The first SimpleDSL migration at commit `575c0186eb2d` passed [Android build CI #41255377321](https://github.com/qigao/turbo-interact/actions/runs/41255377321) and [Mermaid CI #41255377375](https://github.com/qigao/turbo-interact/actions/runs/41255377375). Each newer HEAD must pass independently. CI does **not** install an APK, start an `app_process` helper or prove a real Android device works.
+
+## CI scope (project policy)
+
+CI is **source- and contract-only**. Its required Android gate is the existing
+[Android device library workflow](../.github/workflows/android-agent.yml) running
+`:agent:assembleDebug :agent:testDebugUnitTest` with SimpleDSL 0.3.0, JDK 21,
+Gradle 9.1.0 and Android SDK 36. This verifies Android library/AIDL/Kotlin compilation
+and deterministic JVM tests for session generations, authorization/nonce behavior,
+display 0 rejection, input attempt deduplication and task launch policy.
+
+**Never add Android physical-device farms, USB/ADB devices, emulator boot,
+`connectedAndroidTest`, device installation or screenshot/UI instrumentation
+as required CI checks.** Do not add installer/consumer/probe-only projects to simulate
+a product device. No unverified device interaction is reported as CI SUCCESS.
+
+Real Android behaviors (VirtualDisplay focus/IME, system hidden APIs,
+ContentProvider/Binder handoff, hardware codec, main-screen input isolation
+and OEM/API differences) are a **separate optional manual/product validation
+track**, not CI and not a blanket PR merge requirement. If not exercised,
+describe those capabilities as **unverified on device**; product readiness cannot
+be inferred from AAR/JVM green. PR merge evaluation is based on source scope,
+ABI/contracts, deterministic tests, documentation and the actual required CI.
+
+## Canonical C11 ActionOwner through Android JNI
+
+This module now builds `libturbo_interact_android_jni.so` by linking the **same**
+production C11 `TurboInteract::Core` library as [native PR #20](https://github.com/qigao/turbo-interact/pull/20);
+it does not embed a second scheduler, action graph or authority. SimpleDSL 0.3.0
+uses NDK 27.2.12479018 and CMake 3.22.1. Android AAR product build
+[CI #41266990739](https://github.com/qigao/turbo-interact/actions/runs/41266990739)
+passed all four ABI compiles (arm64-v8a, armeabi-v7a, x86, x86_64),
+AIDL, Kotlin and JVM unit tests at exact code HEAD `74bca9ac3dc1bb90422faedc42da13b3c1be7d05`.
+
+**Embedding host lifecycle (not an installer/consumer project):**
+
+1. Construct `CanonicalHostGrants(deviceSessionId, sessionGeneration, explicitSessionControls)` and pass it to `TurboDisplayHandoffHost.begin(...)`. Input is denied until a native owner exists. Display creation and launch are *separately* explicit session-control grants; current C11 ActionIntent covers input, not display creation.
+2. An existing trusted App/ADB transport must launch `TurboDisplayShellMain` via `launchSpec()` and authenticate the nonce/UID/signature Binder exchange. The library does not launch ADB itself; this handshake has **not** been run on a device.
+3. Obtain authenticated `connectedShell()`, create the independent display via that Shell with explicitly allowed session control and a caller-supplied capture Surface, and read the resulting `DisplayRef`.
+4. Create `NativeAndroidActionOwner.create(ref, shell, liveInputPolicy, providerId, capabilities, planGeneration)` and bind it to `CanonicalHostGrants.bindNativeOwner(owner)`. Both direct model calls and the sandbox's host adapter must submit through that **same native owner and attempt ledger**.
+5. For each `NativeInputAction`, JNI calls native `ti_action_owner_submit`, checks exact plan/session/display/geometry, expiry/evidence and current host `LiveNativeInputPolicy`. On approval, only the in-flight native `tap` or `BACK` callback is allowed to call the Shell.
+6. The Shell issues reverse Binder `ITurboDisplayAuthority.allowInput`; `CanonicalHostGrants.allowInput` consumes precisely one matching native ticket. Without that consumption, JNI maps a purported `SENT` to `UNKNOWN`. Kotlin device-side `InputAttemptLedger` remains a deny-only guard, not a second authorization owner.
+7. End with `owner.revoke()`, `host.revoke()`, then `owner.close()` after in-flight calls finish (if busy, `tryClose()` returns false). Shell death revokes this owner. No automatic retry of `UNKNOWN`.
+
+**Important limits:** all this establishes buildable source and explicit API boundaries;
+the embedding host's actual ADB transport, Android Binder callback execution and
+compositor-causal post-action frame evidence remain unqualified. A backend-terminal
+`SENT` is not proof that an App responded or the task completed. R8 keeps exact
+JNI class/method names through `android/agent/jni-keep.pro`. Real-device
+qualification remains outside CI and is not a blanket merge requirement.
+
+See [M5c JNI contract](../docs/architecture/M5C_ANDROID_JNI.md),
+[Draft PR #21](https://github.com/qigao/turbo-interact/pull/21) and
+[Issue #19](https://github.com/qigao/turbo-interact/issues/19).
+
+## M5d installed-host and post-input evidence contracts
+
+The **final installed embedding APK**, not the AAR alone, must extract the
+approved native worker to its read-only executable
+`ApplicationInfo.nativeLibraryDir`. In the existing host App's AGP packaging
+configuration set `packaging.jniLibs.useLegacyPackaging = true` and inspect
+`TrustedSandboxWorkerInstallation.inspect(applicationContext)` before
+launching a `TrustedSandboxCommandRunner` from a dedicated IO thread.
+`READY_FOR_EXEC_ATTEMPT` is a local preflight, not proof of real `execve`.
+Missing native extraction, wrong path, writable or nonexecutable worker all
+fail closed; do **not** copy any executable into `filesDir`.
+
+For image evidence, bind the actual returned `DisplaySnapshot` to the
+`AndroidRgbaCapture` once after display creation. A frame's
+`stamp` is tied to the display incarnation, capture session and sequence.
+`NativeAndroidActionOwner.submitWithFrameBarrier` anchors an input to that
+pre-action stamp and returns a conservative post-input gate.
+`FRAME_OBSERVED_CAUSALITY_UNPROVEN` means only that a later capture sample
+was observed; it is **not** a compositor ordering proof or task verification.
+`UNKNOWN` inputs, stale geometry, display-ID reuse, missing stamps and
+capture replacement cannot produce stronger evidence.
+
+See [M5d host APK runtime acceptance](../docs/architecture/M5D_HOST_APK_RUNTIME_ACCEPTANCE.md)
+for the actual host/ADB/Binder/worker/frame integration steps and independent
+device acceptance. No test APK, physical-device/emulator CI, or consumer project
+was introduced.
+
+## Single-owner embedding App session
+
+`EmbeddedAndroidHostSession.open` composes an existing authorized ADB
+transport, user-supplied live host policies, one authenticated Shell
+Binder, the owned RGBA VirtualDisplay and the **same** native C11 ActionOwner.
+Its `launchTarget`, `observeInput`, and `runTrustedSandboxAction`
+operations use exactly this session and don't automatically pair ADB,
+choose an App or claim compositor verification. `tryClose()` returns
+false while active calls or native callbacks remain; once drained it
+revokes the host, releases the display, closes the capture and the
+transport lease. The `teardownReport` retains whether exact display
+release was acknowledged. Malformed `createDisplay` replies revoke the
+entire authenticated shell instead of releasing an untrusted ID.
+
+For the exact ordered product integration and unverified device gates
+see [M5e](../docs/architecture/M5E_ANDROID_EMBEDDING_RUNTIME.md).
+
+## Restricted shell handoff (implemented in source, device-unqualified)
+
+The Android library now includes a **host App entry** and **shell app_process entry**; this is not a separate APK or a replacement for the C11 Action Owner:
+
+1. An embedding App explicitly calls `TurboDisplayHandoffHost.begin(context, deviceSessionId, sessionGeneration, grants)`. The caller supplies the actual `HostDisplayGrants` policy; there is no allow-all fallback.
+2. `launchSpec()` issues a one-time 256-bit nonce and returns `ShellLaunchSpec.command` and `nonceLine`. The embedding App's *already authorized* ADB exec transport must send `nonceLine` on stdin, not in argv, saved scripts or logs. The Android library does not silently enable wireless debugging, install a consumer App, or open an ADB connection.
+3. `TurboDisplayShellMain` runs via Android `app_process` under shell uid 2000, checks the actual installed APK source/UID/signing certificates, and connects to the embedding APK's `${applicationId}.turbo_interact_helper` provider using Android's external ContentProvider service. The protected provider rejects unknown callers.
+4. `TurboDisplayHandoffHost` verifies Binder calling UID/PID, supplied process UID/PID, current APK classpath, the shell service's separate `identity()` Binder call and a fresh 30-second one-shot nonce, then returns a live `ITurboDisplayAuthority` Binder and host death token.
+5. Every device effect consults live host policy through reverse Binder; `Binder.clearCallingIdentity()` avoids accidentally forwarding the host caller's UID during nested callbacks. On host death, shell grants are dropped, owned displays are released and the helper exits. Explicit `revoke()` denies new host grants and requests remote session teardown.
+
+The generated interface `ITurboDisplayShell` exposes only display create/release, targeted tap/limited key and App launch; there is **no** generic command, unlock, clipboard or audio AppOps operation. No implicit display-0 routing or effect retry is allowed.
+
+**Remaining device/runtime blockers:** this library has no bundled ADB transport or installing App; an actual embedding App must provide an authenticated transport and live grant source. The hidden Android API invocation paths have not been exercised on an Android phone. Current APK signer lookup is first qualified for the primary Android user; multi-user/work-profile package discovery needs separate conformance. C11 Action Owner JNI **runtime** proof, main-screen focus/IME proof, cross-process grant-revocation linearizability, physical touch/surface races, and input→compositor-frame causality remain independent gates.
+
+## M17 Android H.264 packet source (TurboMedia StreamGraph handoff)
+
+The existing `AndroidH264Capture` is an **actual Android MediaCodec
+encoder/Suface provider**, not a second TurboMedia decoder or scheduler.
+The authorized host calls `AuthorizedH264DisplayCreator.create` on the
+same `AuthorizedShellConnection` used for RGBA. It requests an AVC Baseline
+profile with no B frames, creates the MediaCodec InputSurface, invokes the
+existing authenticated Shell `createDisplay`, validates the exact
+`DisplayRef` through the shared `AuthorizedDisplaySurfaceCreator`, and
+binds that display to the capture **once**. Any failed or malformed Binder
+response closes the Shell and the MediaCodec Surface, not a guessed display.
+
+Each `pollPacket()` result contains an **owned copy** of bytes and a
+`H264CaptureStamp`: immutable device/session/display/geometry identity,
+random capture UUID bits, stream incarnation, monotonic packet sequence,
+MediaCodec PTS in microseconds, and Android host arrival clock. This
+does not contain DTS; a PC Codec may assert DTS=PTS only after independently
+qualifying a Baseline/no-reorder stream. Android and the remote PC do not
+share a universal monotonic clock, and neither H264 PTS nor frame arrival
+proves a tap caused a particular compositor frame.
+
+Only real **Annex-B start-code-prefixed** output is admitted, with strict
+finite queue credit. MediaCodec `csd-0`/`csd-1` and
+`BUFFER_FLAG_CODEC_CONFIG` are carried as explicit config packets, including
+when config arrived before display binding. Pre-bound picture pixels are
+rejected (not assigned a guessed display). Repeated output-format change
+needs a new capture/stream. Zero-byte terminal EOS is no longer omitted;
+nonempty EOS output consumes **two** credits, one for the access unit and
+one for a separate empty EOS row. `signalEndOfInput()` requests graceful
+EOS. Overflow, unsupported bitstream format, partial stream and Codec
+errors fail explicitly; packet loss is not silently hidden.
+
+The `AuthorizedH264DisplayCreator` profile also checks that a decoded
+I420 frame fits TurboMedia CPU FrameStore's 8 MiB bound before creating
+any device display. If an Android encoder ignores the requested profile,
+the [TurboMedia H264 Codec Provider in Draft PR #276](https://github.com/qigao/turbomedia/pull/276)
+must reject its actual SPS. A qualified **transport/framing + authenticated
+session handshake** is still required to move these copied packets into the
+remote PC StreamGraph Source; a `FrameRef` cannot cross processes as pixel
+memory, nor does this AAR claim that Android real-device MediaCodec behavior
+has been tested. See [M17 Issue #275](https://github.com/qigao/turbomedia/issues/275).
+No emulator/physical-device, installer, consumer or probe CI is added.
+
+## Security and functional limits
+
+1. `AuthenticatedDisplayShell` has no default allow-all authority and rejects unknown Binder caller UIDs. Its construction requires shell UID 2000, but the **Mika-derived nonce/certificate-pinned ContentProvider handoff has been implemented in source**. Its actual Binder delivery still requires an embedding App's authorized ADB transport and has not been exercised on a phone.
+2. No globally callable shell command executor, clipboard modifier, unlocking, app move/kill or audio AppOps are exposed. Resource teardown is allowed with a matching display incarnation even after grant revocation.
+3. This release path is intentionally Android 14+ for strong focus isolation. Android 12–13 capabilities are separately pending, never silently promoted.
+4. `DisplaySession` (actual Android display lifetime) and `CaptureSession` (ImageReader or MediaCodec Surface lifetime) are separate. `replaceSurface()` can rebind without destroying the App task; ownership and codec reset on real devices remain untested.
+5. `SENT` means a local input backend reported successful dispatch, **not** the user-visible postcondition. Encoded PTS and local RGBA frame counters do not prove post-input capture causality. The capture barrier and actual C11 Action Owner / Binder runtime delivery remain pending; the JNI AAR builds successfully.
+6. Capture consumers may not retain a borrowed codec buffer. H.264 packets are owned byte copies, with bounded credit and explicit error on capacity exhaustion; no silent output drop.
+7. Permission changes, OS/API incompatibility, shell-helper process death, input on display 0, resize/geometry changes, multiple App tasks and IME isolation are tracked for separate product/device validation, **not required CI jobs or automatic PR merge blockers**. Without device evidence, do not claim those runtime behaviors are proven.
+
+## Next runtime integration work (not CI hardware gates)
+
+- Finish trusted app `app_process` bootstrap, nonce + pinned signature, Binder handoff, process death cleanup, scoped grants.
+- Exercise the built C11/JNI/Android Binder integration from an authorized embedding App; the source and ABI compile, but full cross-process runtime remains unverified.
+- Optional manual product verification: virtual display N → Settings launch → ImageReader/MediaCodec captures → targeted click → **new** frame evidence → unchanged user main display. Not a CI check.
+- Keep two-display, rotation, teardown, secure content and Android 14/15/16 OEM observations as an independent product compatibility matrix, not an automated CI obligation.
+
+Tracking [Issue #16](https://github.com/qigao/turbo-interact/issues/16) and [Draft PR #17](https://github.com/qigao/turbo-interact/pull/17).

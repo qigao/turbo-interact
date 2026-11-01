@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -282,6 +283,118 @@ static void test_wrong_actual_kernel_peer_is_rejected(void) {
     assert(rmdir(dir) == 0);
 }
 
+#if defined(TI_TRUSTED_WORKER_PATH)
+/*
+ * Product-level process test: run the actual C11 worker executable (NOT a
+ * consumer project, shell script, mock socket or another protocol engine).
+ * Parent grants the action using its canonical C11 ActionOwner; the child
+ * reads stdin, presents its kernel peer UID and token, and sends one RPC.
+ */
+static pid_t start_trusted_worker(char *const args[], const char *path,
+                                  const char *token, int valid_frame) {
+    int fds[2];
+    pid_t pid;
+    char handoff[256];
+    int size;
+    size_t offset = 0u;
+    assert(pipe(fds) == 0);
+    pid = fork();
+    assert(pid >= 0);
+    if (pid == 0) {
+        close(fds[1]);
+        if (dup2(fds[0], STDIN_FILENO) < 0) _exit(126);
+        close(fds[0]);
+        execv(TI_TRUSTED_WORKER_PATH, args);
+        _exit(125);
+    }
+    close(fds[0]);
+    size = snprintf(handoff, sizeof(handoff), "%s\n%s\n%s\n",
+        valid_frame ? "TURBOINTERACT-SANDBOX/1" : "INVALID/1",
+        path, token);
+    assert(size > 0 && (size_t)size < sizeof(handoff));
+    while (offset < (size_t)size) {
+        ssize_t n = write(fds[1], handoff + offset, (size_t)size - offset);
+        if (n < 0 && errno == EINTR) continue;
+        assert(n > 0);
+        offset += (size_t)n;
+    }
+    memset(handoff, 0, sizeof(handoff));
+    close(fds[1]); /* EOF is the end of the 3-line framed protocol. */
+    return pid;
+}
+
+static void check_worker_exit(pid_t pid, int code) {
+    int status = 0;
+    pid_t result;
+    do {
+        result = waitpid(pid, &status, 0);
+    } while (result < 0 && errno == EINTR);
+    assert(result == pid && WIFEXITED(status) && WEXITSTATUS(status) == code);
+}
+
+static void test_real_worker_process_stdin_socket_reply(void) {
+    fixture f = {0};
+    char directory[] = "/tmp/ti-worker-XXXXXX";
+    char path[TI_SANDBOX_IPC_PATH_CAP];
+    char token[TI_SANDBOX_IPC_TOKEN_HEX_CAP];
+    char wrong[TI_SANDBOX_IPC_TOKEN_HEX_CAP];
+    char *back[] = {
+        (char *)TI_TRUSTED_WORKER_PATH, (char *)"back",
+        (char *)"1", (char *)"73", (char *)"1",
+        (char *)"0", (char *)"0", (char *)"3",
+        (char *)"1", (char *)"2000000000", NULL
+    };
+    char *tap[] = {
+        (char *)TI_TRUSTED_WORKER_PATH, (char *)"tap",
+        (char *)"4", (char *)"76", (char *)"2",
+        (char *)"23", (char *)"5", (char *)"3",
+        (char *)"1", (char *)"2000000000",
+        (char *)"100000", (char *)"900000", NULL
+    };
+    pid_t pid;
+    assert(mkdtemp(directory) != NULL);
+    assert(chmod(directory, 0700) == 0);
+    owner_create(&f);
+    ipc_open(&f, directory);
+    assert(ti_sandbox_ipc_credentials(f.ipc, path, sizeof(path),
+                                       token, sizeof(token)) == TI_OK);
+    f.permit = 1u;
+
+    /* Malformed stdin is rejected without ANY network/device effect. */
+    pid = start_trusted_worker(back, path, token, 0);
+    check_worker_exit(pid, 2);
+    assert(f.grants == 0u && f.effects == 0u);
+
+    strcpy(wrong, token);
+    wrong[3] = wrong[3] == 'c' ? 'a' : 'c';
+    pid = start_trusted_worker(back, path, wrong, 1);
+    assert(ti_sandbox_ipc_serve_one(f.ipc, 1000000000u, 1000u) == TI_EAUTH);
+    check_worker_exit(pid, 3);
+    assert(f.grants == 0u && f.effects == 0u);
+
+    pid = start_trusted_worker(back, path, token, 1);
+    assert(ti_sandbox_ipc_serve_one(f.ipc, 1000000000u, 1000u) == TI_OK);
+    check_worker_exit(pid, 0);
+    assert(f.grants == 1u && f.effects == 1u);
+
+    /* A different worker call ID cannot replay the SAME action/attempt. */
+    back[2] = (char *)"2";
+    pid = start_trusted_worker(back, path, token, 1);
+    assert(ti_sandbox_ipc_serve_one(f.ipc, 1000000000u, 1000u) == TI_ECONFLICT);
+    check_worker_exit(pid, 3);
+    assert(f.effects == 1u);
+
+    pid = start_trusted_worker(tap, path, token, 1);
+    assert(ti_sandbox_ipc_serve_one(f.ipc, 1000000000u, 1000u) == TI_OK);
+    check_worker_exit(pid, 0);
+    assert(f.grants == 2u && f.effects == 2u);
+
+    assert(ti_sandbox_ipc_destroy(&f.ipc) == TI_OK);
+    assert(ti_action_owner_destroy(&f.owner) == TI_OK);
+    assert(rmdir(directory) == 0);
+}
+#endif
+
 static void test_directory_must_be_private(void) {
     fixture f = {0};
     ti_sandbox_ipc_config_v1 c = TI_SANDBOX_IPC_CONFIG_V1_INIT;
@@ -330,6 +443,9 @@ int main(void) {
 #if !defined(_WIN32)
     test_real_unix_socket_and_authorization();
     test_wrong_actual_kernel_peer_is_rejected();
+#if defined(TI_TRUSTED_WORKER_PATH)
+    test_real_worker_process_stdin_socket_reply();
+#endif
     test_directory_must_be_private();
 #else
     test_windows_has_explicit_unsupported_local_socket();
