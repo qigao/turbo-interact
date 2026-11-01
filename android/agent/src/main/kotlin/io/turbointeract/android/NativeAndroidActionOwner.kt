@@ -243,6 +243,28 @@ class NativeAndroidActionOwner private constructor(
         } finally { unpin() }
     }
 
+    /**
+     * One input attempt paired with a *pre-existing* frame from the same
+     * display/capture incarnation. Returns an observation gate, not a
+     * compositor fence, a verified UI change or permission to replay UNKNOWN.
+     * Caller samples the next frame after this returns on the SAME capture.
+     */
+    fun submitWithFrameBarrier(
+        action: NativeInputAction,
+        before: CaptureFrameStamp,
+        nowNs: Long = SystemClock.elapsedRealtimeNanos(),
+    ): PostActionFrameBarrier {
+        require(action.display == before.display &&
+            action.captureSequence == before.sequence && action.evidenceId > 0)
+        require(nowNs >= before.receivedAtNs && nowNs > 0) {
+            "input and ImageReader must use the same host monotonic clock"
+        }
+        val receipt = submit(action, nowNs)
+        return PostActionFrameBarrier(
+            action, before, receipt, SystemClock.elapsedRealtimeNanos()
+        )
+    }
+
     /** Device's reverse Binder admission: exact native ticket, consumed once. */
     fun confirmInFlight(intent: InputIntent): Boolean {
         if (intent.kind != InputIntent.Kind.TAP && intent.kind != InputIntent.Kind.BACK) return false
