@@ -42,8 +42,16 @@ It is **not** a new App/installer/consumer project and not a device CI plan.
    `connection.shell`, returned `snapshot.ref`, explicit live
    `LiveNativeInputPolicy`, provider/capability/plan identities. Bind it
    once using `grants.bindNativeOwner(owner)`. Never create a separate
-   owner for worker script requests.
-6. Obtain a real `capture.latestFrame()` from the bound ImageReader.
+   owner for worker script requests. Launch the **explicitly chosen** target
+   package on `snapshot.ref` through the already authenticated
+   `connection.shell.launchApp(displayId, displayGeneration,
+   geometryGeneration, packageName, launchActionId)`; the separate
+   `HostSessionControlPolicy.allowLaunch` must approve it. A `STATUS_SUBMITTED`
+   result only means launch was requested, **not** that the App is visible or
+   ready. Reject DENIED/UNKNOWN and do not silently launch Settings or fall
+   back to the main screen.
+6. Obtain a real `capture.latestFrame()` from the bound ImageReader **after
+   checking the intended target App is visible in that frame**.
    A typed `NativeInputAction` for a TAP must reference that exact
    `stamp.display` and `stamp.sequence`, a valid evidenceId, new action
    ID/attempt ID, live plan generation and monotonic deadline. The App
