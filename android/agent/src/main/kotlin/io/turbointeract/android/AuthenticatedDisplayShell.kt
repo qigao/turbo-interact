@@ -45,6 +45,8 @@ class AuthenticatedDisplayShell(
         require(allowedUid > 0 && allowedUid != 2000) { "companion UID required" }
     }
 
+    @Volatile private var closed = false
+
     private val registry = DisplayRegistry(deviceSessionId, sessionGeneration)
     private val displays = AndroidVirtualDisplayOwner(displayManager, registry, AndroidShellImePolicy::requestLocal)
     private val input = AndroidSdkInput(registry, displays, InputApproval { request ->
@@ -61,9 +63,21 @@ class AuthenticatedDisplayShell(
         return super.onTransact(code, data, reply, flags)
     }
 
+    override fun identity(): IntArray = intArrayOf(Process.myUid(), Process.myPid())
+
+    /** App-controlled teardown, or local cleanup on host Binder death. */
+    override fun closeSession() {
+        terminateFromHostDeath()
+    }
+
+    fun terminateFromHostDeath(): Int {
+        closed = true
+        return displays.releaseAll()
+    }
+
     override fun createDisplay(surface: Surface, width: Int, height: Int, densityDpi: Int): Bundle {
         val result = Bundle()
-        if (!safeAdmission { admission.allowCreateDisplay() }) {
+        if (closed || !safeAdmission { admission.allowCreateDisplay() }) {
             result.putInt("status", STATUS_DENIED)
             return result
         }
@@ -86,6 +100,7 @@ class AuthenticatedDisplayShell(
         displayId: Int, displayGeneration: Long, geometryGeneration: Long,
         packageName: String, actionId: Long
     ): Int {
+        if (closed) return STATUS_DENIED
         val ref = ref(displayId, displayGeneration, geometryGeneration)
         return when (launcher.launch(ref, packageName, actionId)) {
             LaunchOutcome.SUBMITTED -> STATUS_SUBMITTED
@@ -97,7 +112,7 @@ class AuthenticatedDisplayShell(
     override fun tap(
         displayId: Int, displayGeneration: Long, geometryGeneration: Long,
         actionId: Long, attemptId: Long, x: Int, y: Int
-    ): Int = toStatus(input.tap(
+    ): Int = if (closed) STATUS_DENIED else toStatus(input.tap(
         InputIntent(ref(displayId, displayGeneration, geometryGeneration), actionId, attemptId, InputIntent.Kind.TAP), x, y
     ))
 
@@ -105,6 +120,7 @@ class AuthenticatedDisplayShell(
         displayId: Int, displayGeneration: Long, geometryGeneration: Long,
         actionId: Long, attemptId: Long, keyKind: Int
     ): Int {
+        if (closed) return STATUS_DENIED
         val kind = when (keyKind) {
             1 -> InputIntent.Kind.BACK
             2 -> InputIntent.Kind.ENTER
@@ -119,7 +135,7 @@ class AuthenticatedDisplayShell(
         displays.release(ref(displayId, displayGeneration, 0L))
 
     /** Call from the trusted bootstrap on Binder death/revocation, never via untrusted IPC. */
-    fun releaseOwnedResources(): Int = displays.releaseAll()
+    fun releaseOwnedResources(): Int = terminateFromHostDeath()
 
     private fun ref(displayId: Int, displayGeneration: Long, geometryGeneration: Long) =
         DisplayRef(registry.deviceSessionId, registry.sessionGeneration,
