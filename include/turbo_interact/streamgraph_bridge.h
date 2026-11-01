@@ -8,6 +8,7 @@
  */
 #include "turbo_interact/bridge.h"
 #include <turbo_frame_store.h>
+#include <turbo_streamgraph_owner_dispatch.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -74,6 +75,61 @@ TI_API ti_status ti_sg_bridge_visit_pinned(
     ti_sg_bridge_context_v1 *context, ti_bridge *bridge,
     ti_bridge_ticket_v1 taken_ticket,
     ti_sg_bridge_frame_visit_fn callback, void *user);
+
+
+/* M17d asynchronous PROVIDER STATUS → typed Bridge terminal contract.
+ * This is not a model inference result or a new executor. A Host-owned
+ * Provider callback thread calls tm_pc_complete(); the existing Media Owner
+ * alone invokes tm_od_step_completion(), which calls this callback.
+ *
+ * Only the actual TAKEN, Pin-retaining AnalysisRequest with exact
+ * correlation/provider/frame lineage may authorize a terminal event.
+ * The result is a bounded owned VALUE payload; FrameRef stays weak and
+ * an ActionIntent is never created or executed here.
+ */
+#define TI_SG_TERMINAL_MAX_ENTRIES 32u
+typedef struct ti_sg_analysis_terminal_v1 {
+    uint32_t size, version;
+    uint32_t outcome, completion_observed; /* original TM_PC_* semantics */
+    int32_t provider_status;
+    uint32_t reserved;
+    uint64_t correlation, provider_generation, source_packet_sequence;
+    ti_frame_ref_v1 frame; /* weak, not pixels or an extra Pin */
+    uint64_t device_session_id, device_session_generation;
+    uint32_t display_id, reserved2;
+    uint64_t geometry_generation, capture_session_hi, capture_session_lo;
+    uint64_t stream_generation, pts, dts;
+    uint32_t timebase_num, timebase_den;
+} ti_sg_analysis_terminal_v1;
+
+typedef struct ti_sg_terminal_entry_v1 {
+    uint32_t size, version;
+    uint64_t correlation; /* MUST equal the existing AnalysisRequest event_id */
+    uint64_t result_event_id; /* unique nonzero downstream event ID */
+    ti_bridge_ticket_v1 request_ticket; /* still TAKEN, owns the FramePin */
+} ti_sg_terminal_entry_v1;
+#define TI_SG_TERMINAL_ENTRY_V1_INIT {sizeof(ti_sg_terminal_entry_v1),TI_ABI_VERSION,0u,0u,{0}}
+
+typedef struct ti_sg_terminal_delivery_v1 {
+    uint32_t size, version;
+    ti_sg_bridge_context_v1 *source_context; /* borrowed, stable until join */
+    ti_bridge *bridge; /* borrowed: must outlive all portal terminal callbacks */
+    uint64_t plan_generation, provider_generation;
+    uint32_t result_schema_id, entry_count;
+    const ti_sg_terminal_entry_v1 *entries; /* caller-owned, finite, immutable */
+    uint32_t reserved;
+} ti_sg_terminal_delivery_v1;
+#define TI_SG_TERMINAL_DELIVERY_V1_INIT {sizeof(ti_sg_terminal_delivery_v1),TI_ABI_VERSION,NULL,NULL,0u,0u,0u,0u,NULL,0u}
+
+/* Compatible with tm_od_terminal_emit_fn. Return 0 ONLY after Bridge commit
+ * accepted the immutable terminal. On capacity/authority/lineage rejection
+ * return nonzero: tm_od_step_completion leaves its original Provider ticket
+ * TAKEN/pending; no replay/reemit/retry. Host must reconcile and explicitly
+ * call tm_od_settle_pending_completion() before teardown.
+ * The matching pinned AnalysisRequest remains owned until its own settle.
+ */
+TI_API int ti_sg_bridge_emit_terminal(void *delivery_context,
+                                      const tm_pc_result_v1 *terminal);
 
 #ifdef __cplusplus
 }
