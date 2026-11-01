@@ -29,6 +29,20 @@ gradle --no-daemon :agent:assembleDebug :agent:testDebugUnitTest
 
 CI: [Android device library](../.github/workflows/android-agent.yml). It compiles the actual product library, generated AIDL and runs JUnit tests for display generation, attempt replay, and launch policy. The first SimpleDSL migration at commit `575c0186eb2d` passed [Android build CI #41255377321](https://github.com/qigao/turbo-interact/actions/runs/41255377321) and [Mermaid CI #41255377375](https://github.com/qigao/turbo-interact/actions/runs/41255377375). Each newer HEAD must pass independently. CI does **not** install an APK, start an `app_process` helper or prove a real Android device works.
 
+## Restricted shell handoff (implemented in source, device-unqualified)
+
+The Android library now includes a **host App entry** and **shell app_process entry**; this is not a separate APK or a replacement for the C11 Action Owner:
+
+1. An embedding App explicitly calls `TurboDisplayHandoffHost.begin(context, deviceSessionId, sessionGeneration, grants)`. The caller supplies the actual `HostDisplayGrants` policy; there is no allow-all fallback.
+2. `launchSpec()` issues a one-time 256-bit nonce and returns `ShellLaunchSpec.command` and `nonceLine`. The embedding App's *already authorized* ADB exec transport must send `nonceLine` on stdin, not in argv, saved scripts or logs. The Android library does not silently enable wireless debugging, install a consumer App, or open an ADB connection.
+3. `TurboDisplayShellMain` runs via Android `app_process` under shell uid 2000, checks the actual installed APK source/UID/signing certificates, and connects to the embedding APK's `${applicationId}.turbo_interact_helper` provider using Android's external ContentProvider service. The protected provider rejects unknown callers.
+4. `TurboDisplayHandoffHost` verifies Binder calling UID/PID, supplied process UID/PID, current APK classpath, the shell service's separate `identity()` Binder call and a fresh 30-second one-shot nonce, then returns a live `ITurboDisplayAuthority` Binder and host death token.
+5. Every device effect consults live host policy through reverse Binder; `Binder.clearCallingIdentity()` avoids accidentally forwarding the host caller's UID during nested callbacks. On host death, shell grants are dropped, owned displays are released and the helper exits. Explicit `revoke()` denies new host grants and requests remote session teardown.
+
+The generated interface `ITurboDisplayShell` exposes only display create/release, targeted tap/limited key and App launch; there is **no** generic command, unlock, clipboard or audio AppOps operation. No implicit display-0 routing or effect retry is allowed.
+
+**Remaining device/runtime blockers:** this library has no bundled ADB transport or installing App; an actual embedding App must provide an authenticated transport and live grant source. The hidden Android API invocation paths have not been exercised on an Android phone. Current APK signer lookup is first qualified for the primary Android user; multi-user/work-profile package discovery needs separate conformance. C11 Action Owner binding, main-screen focus/IME proof, cross-process grant-revocation linearizability, physical touch/surface races, and input→compositor-frame causality remain independent gates.
+
 ## Security and functional limits
 
 1. `AuthenticatedDisplayShell` has no default allow-all authority and rejects unknown Binder caller UIDs. Its construction requires shell UID 2000, but the **Mika-derived nonce/certificate-pinned ContentProvider handoff is not yet ported**. The Binder is not available to a host app until that explicit bootstrap is implemented and tested.
