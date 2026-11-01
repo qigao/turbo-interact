@@ -9,21 +9,25 @@
 | `DisplayRegistry` | Session-scoped DisplayRef, numeric ID reuse, geometry generation; display 0 always invalid | JVM test and actual Android library compile |
 | `AndroidVirtualDisplayOwner` | Android 14+ shell VirtualDisplay + OWN_FOCUS + anti-focus-steal flags; local IME request and exact release; 2-display budget | SDK source compiled, no real-device proof |
 | `AndroidRgbaCapture` | ImageReader RGBA latest-frame sampling with copied Bitmap and local capture sequence | SDK compiled; on-device rendering unverified |
-| `AndroidH264Capture` | Hardware MediaCodec InputSurface encoder, copied H.264 buffers, bounded packet queue and explicit FAIL on full queue | SDK compilation pending at current HEAD; no transport/protocol yet |
+| `AndroidH264Capture` | Hardware MediaCodec InputSurface encoder, copied H.264 buffers, bounded packet queue and explicit FAIL on full queue | Android AAR build passed; no transport/protocol or device test yet |
 | `AndroidSdkInput` | Display-owner + admission guard, double replay prevention, touch and limited BACK/ENTER; no implicit main/ADB fallback | SDK compiled, no real device |
 | `AndroidShellAppLauncher` | Activity launch on Display N, main-screen/other-display App conflict and attempt replay refusal | SDK compiled, actual task behavior pending |
-| `AndroidShellContext` | UID 2000 shell package attribution/ActivityThread context | SDK compilation pending at current HEAD; no bootstrap yet |
+| `AndroidShellContext` | UID 2000 shell package attribution/ActivityThread context | Android AAR build passed; no trusted bootstrap yet |
 | `ITurboDisplayShell.aidl` + `AuthenticatedDisplayShell` | Narrow Binder surface, caller-UID checks and explicit `ShellAdmission` on external effects | SDK compiled; **handshake/Binder delivery not integrated** |
 
 ## Build and test
 
-From `android/`, using Android SDK platform 36, JDK 17 and Gradle 8.11.1:
+From `android/`, using the **released SimpleDSL 0.3.0** settings/Android plugins, JDK 21, Gradle 9.1.0 and Android SDK 36.
+
+The single repository policy `android/dependencies.toml` specifies Android Java 21, compileSdk 36 and minSdk 30. SimpleDSL manages AGP 9.0.1 with built-in Kotlin (2.2.10); `:agent` uses `simpledsl { androidLibrary { namespace = 'io.turbointeract.android' } }` and explicitly sets `android.buildFeatures.aidl = true`. There is **no** `org.jetbrains.kotlin.android` plugin, duplicate AGP version or separate consumer project.
+
+
 
 ```sh
 gradle --no-daemon :agent:assembleDebug :agent:testDebugUnitTest
 ```
 
-CI: [Android device library](../.github/workflows/android-agent.yml). It compiles the actual product library and runs JUnit tests for display generation, attempt replay, and launch policy. It does **not** install an APK, start an `app_process` helper or fake device integration.
+CI: [Android device library](../.github/workflows/android-agent.yml). It compiles the actual product library, generated AIDL and runs JUnit tests for display generation, attempt replay, and launch policy. The first SimpleDSL migration at commit `575c0186eb2d` passed [Android build CI #41255377321](https://github.com/qigao/turbo-interact/actions/runs/41255377321) and [Mermaid CI #41255377375](https://github.com/qigao/turbo-interact/actions/runs/41255377375). Each newer HEAD must pass independently. CI does **not** install an APK, start an `app_process` helper or prove a real Android device works.
 
 ## Security and functional limits
 
