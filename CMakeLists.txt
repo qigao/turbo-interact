@@ -7,7 +7,8 @@ include(CMakePackageConfigHelpers)
 add_library(turbo_interact_core STATIC
   src/domain.c
   src/application.c
-  src/binding.c)
+  src/binding.c
+  src/action_owner.c)
 add_library(TurboInteract::Core ALIAS turbo_interact_core)
 set_target_properties(turbo_interact_core PROPERTIES
   EXPORT_NAME Core
@@ -50,6 +51,10 @@ if(BUILD_TESTING)
   add_executable(ti_binding_test tests/test_binding.c)
   target_link_libraries(ti_binding_test PRIVATE TurboInteract::Core)
   add_test(NAME ti_binding_test COMMAND ti_binding_test)
+
+  add_executable(ti_action_owner_test tests/test_action_owner.c)
+  target_link_libraries(ti_action_owner_test PRIVATE TurboInteract::Core)
+  add_test(NAME ti_action_owner_test COMMAND ti_action_owner_test)
 
   add_executable(ti_application_test tests/test_application.c)
   target_link_libraries(ti_application_test PRIVATE TurboInteract::Core)
