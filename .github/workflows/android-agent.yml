@@ -64,3 +64,11 @@ jobs:
             grep -Fxq "jni/$abi/libturbo_interact_android_jni.so" <<< "$contents"
             grep -Fxq "jni/$abi/libturbo_interact_sandbox_worker.so" <<< "$contents"
           done
+          # This class is only loaded by app_process using its literal name.
+          # A green AAR with stripped/renamed ShellMain cannot launch on an
+          # R8-minified installed host APK. Verify the REAL AAR's consumer rules,
+          # not a new consumer/test project.
+          grep -Fxq 'proguard.txt' <<< "$contents"
+          rules="$(unzip -p "$aar" proguard.txt)"
+          grep -Fq -- '-keep class io.turbointeract.android.TurboDisplayShellMain' <<< "$rules"
+          grep -Fq -- 'public static void main(java.lang.String[]);' <<< "$rules"
