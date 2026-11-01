@@ -40,6 +40,12 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-2022]
     steps:
       - uses: actions/checkout@v4
+      # Immutable upstream M17c product FrameStore implementation; no mock.
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/turbomedia
+          ref: 224973d5b133f53d7a9734f81a915bdcbf314937
+          path: upstream-turbomedia
       - name: Install Windows llvm-mingw (no MSVC)
         id: llvm-mingw
         if: runner.os == 'Windows'
@@ -48,6 +54,23 @@ jobs:
           target: x64
           build-type: toolchain-only
           obfuscator: 'false'
+      - name: Install actual TurboMedia StreamGraph product SDK
+        shell: bash
+        env:
+          LLVM_MINGW_TOOLCHAIN: ${{ steps.llvm-mingw.outputs.toolchain-file }}
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cmake -S upstream-turbomedia/streamgraph -B build/sg-sdk -G Ninja \
+              -DCMAKE_TOOLCHAIN_FILE="$LLVM_MINGW_TOOLCHAIN" \
+              -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF
+          else
+            CC=clang CXX=clang++ cmake -S upstream-turbomedia/streamgraph \
+              -B build/sg-sdk -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+              -DBUILD_TESTING=OFF
+          fi
+          cmake --build build/sg-sdk --target turbo_media_streamgraph --parallel 2
+          cmake --install build/sg-sdk --prefix "$RUNNER_TEMP/turbomedia-sg-sdk"
       - name: Configure native product with Clang
         shell: bash
         env:
@@ -57,17 +80,26 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             cmake -S . -B build/ci -G Ninja \
               -DCMAKE_TOOLCHAIN_FILE="$LLVM_MINGW_TOOLCHAIN" \
-              -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+              -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+              -DTI_WITH_TURBOMEDIA_STREAMGRAPH=ON \
+              -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/turbomedia-sg-sdk"
           else
             CC=clang CXX=clang++ cmake -S . -B build/ci -G Ninja \
-              -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+              -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+              -DTI_WITH_TURBOMEDIA_STREAMGRAPH=ON \
+              -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/turbomedia-sg-sdk"
           fi
       - name: Compile C11 product and contract tests
         shell: bash
         run: cmake --build build/ci --parallel 2
-      - name: Execute deterministic C11 contract tests
+      - name: Execute existing C11 tests with actual TurboMedia FrameStore
         shell: bash
-        run: ctest --test-dir build/ci --output-on-failure
+        run: |
+          set -euo pipefail
+          export PATH="$RUNNER_TEMP/turbomedia-sg-sdk/bin:$PATH"
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/turbomedia-sg-sdk/lib:${LD_LIBRARY_PATH:-}"
+          export DYLD_LIBRARY_PATH="$RUNNER_TEMP/turbomedia-sg-sdk/lib:${DYLD_LIBRARY_PATH:-}"
+          ctest --test-dir build/ci --output-on-failure
       - name: Install production C11 headers and target
         shell: bash
         run: cmake --install build/ci --prefix "$RUNNER_TEMP/turbo-interact-install"
@@ -78,6 +110,22 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/turbomedia
+          ref: 224973d5b133f53d7a9734f81a915bdcbf314937
+          path: upstream-turbomedia
+      - name: Build actual instrumented StreamGraph product SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          CC=clang CXX=clang++ cmake -S upstream-turbomedia/streamgraph \
+            -B build/sg-sdk-san -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF \
+            -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+            -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address,undefined'
+          cmake --build build/sg-sdk-san --target turbo_media_streamgraph --parallel 2
+          cmake --install build/sg-sdk-san --prefix "$RUNNER_TEMP/turbomedia-sg-sdk"
       - name: Build and test with runner-native Clang sanitizers
         shell: bash
         run: |
@@ -85,6 +133,9 @@ jobs:
           CC=clang CXX=clang++ cmake -S . -B build/sanitize -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
             -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
-            -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+            -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined' \
+            -DTI_WITH_TURBOMEDIA_STREAMGRAPH=ON \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/turbomedia-sg-sdk"
           cmake --build build/sanitize --parallel 2
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/turbomedia-sg-sdk/lib:${LD_LIBRARY_PATH:-}"
           ctest --test-dir build/sanitize --output-on-failure

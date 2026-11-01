@@ -21,11 +21,41 @@ target_include_directories(turbo_interact_core PUBLIC
 # Product C11 builds use Clang/LLVM; MSVC/GCC are not release toolchains.
 target_compile_options(turbo_interact_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
+# Product-level opt-in: actual installed TurboMedia C11 FrameStore owner.
+# Never build an independent frame implementation or silently fall back.
+option(TI_WITH_TURBOMEDIA_STREAMGRAPH
+       "Bind real installed TurboMedia StreamGraph FrameStore to GraphBridge" OFF)
+if(TI_WITH_TURBOMEDIA_STREAMGRAPH)
+  find_package(TurboMediaStreamGraph CONFIG REQUIRED)
+  if(NOT TARGET TurboMedia::StreamGraph)
+    message(FATAL_ERROR "Actual TurboMedia::StreamGraph target unavailable")
+  endif()
+  add_library(turbo_interact_streamgraph_bridge STATIC
+    src/streamgraph_bridge.c)
+  add_library(TurboInteract::StreamGraphBridge ALIAS
+    turbo_interact_streamgraph_bridge)
+  set_target_properties(turbo_interact_streamgraph_bridge PROPERTIES
+    EXPORT_NAME StreamGraphBridge
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  target_include_directories(turbo_interact_streamgraph_bridge PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+  target_compile_options(turbo_interact_streamgraph_bridge PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  target_link_libraries(turbo_interact_streamgraph_bridge PUBLIC
+    TurboInteract::Core TurboMedia::StreamGraph)
+  install(TARGETS turbo_interact_streamgraph_bridge
+    EXPORT TurboInteractTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  install(FILES include/turbo_interact/streamgraph_bridge.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/turbo_interact)
+endif()
+
 install(TARGETS turbo_interact_core EXPORT TurboInteractTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY include/turbo_interact DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY include/turbo_interact DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  PATTERN "streamgraph_bridge.h" EXCLUDE)
 install(EXPORT TurboInteractTargets FILE TurboInteractTargets.cmake
   NAMESPACE TurboInteract:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TurboInteract)
 configure_package_config_file(cmake/TurboInteractConfig.cmake.in
@@ -47,6 +77,13 @@ if(BUILD_TESTING)
 
   add_executable(ti_bridge_test tests/test_bridge.c)
   target_link_libraries(ti_bridge_test PRIVATE TurboInteract::Core)
+  if(TI_WITH_TURBOMEDIA_STREAMGRAPH)
+    target_sources(ti_bridge_test PRIVATE tests/test_streamgraph_bridge.c)
+    target_link_libraries(ti_bridge_test PRIVATE
+      TurboInteract::StreamGraphBridge)
+    target_compile_definitions(ti_bridge_test PRIVATE
+      TI_STREAMGRAPH_BRIDGE_REAL=1)
+  endif()
   add_test(NAME ti_bridge_test COMMAND ti_bridge_test)
 
   add_executable(ti_binding_test tests/test_binding.c)
