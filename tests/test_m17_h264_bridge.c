@@ -149,28 +149,58 @@ static ti_status m17_visit_analysis(void *user,
  * ProviderCompletion portal is touched off-owner. There is NO inference
  * implementation here; the test qualifies the terminal/owner protocol. */
 #include <pthread.h>
+/* A real asynchronous CPU read-only Provider test: the Host lends
+ * a pinned FrameLease pointer to a worker. The worker computes an actual
+ * checksum over the original immutable TurboMedia pixels, without another
+ * pixel copy and without any off-owner FrameStore or Bridge operation.
+ * This is NOT a trained ML recognizer or Android task-success predicate. */
+static uint64_t m17_checksum(const uint8_t *bytes,size_t n) {
+    uint64_t sum=UINT64_C(1469598103934665603);
+    size_t i;
+    for(i=0u;i<n;i++) {
+        sum^=bytes[i];
+        sum*=UINT64_C(1099511628211);
+    }
+    return sum;
+}
 typedef struct m17_completion_worker {
     tm_pc_portal *portal;
     tm_pc_ticket_v1 ticket;
     int32_t provider_status;
+    const uint8_t *borrowed_pixels;
+    size_t pixel_count;
+    uint64_t expected_digest;
+    uint64_t observed_digest;
     tm_pc_status result;
 } m17_completion_worker;
 static void *m17_worker_complete(void *arg) {
     m17_completion_worker *w=(m17_completion_worker *)arg;
+    if (w->borrowed_pixels) {
+        w->observed_digest=m17_checksum(w->borrowed_pixels,w->pixel_count);
+        assert(w->observed_digest==w->expected_digest);
+    }
+    /* Producer threads touch the canonical Portal only. No FrameStore
+     * method, Bridge commit or ActionOwner call occurs off owner. */
     w->result=tm_pc_complete(w->portal,w->ticket,w->provider_status);
     return NULL;
 }
 static void m17_complete_from_real_worker(tm_pc_portal *portal,
                                           tm_pc_ticket_v1 ticket,
-                                          int32_t status) {
+                                          int32_t status,
+                                          const tm_fs_cpu_view_v1 *pixels,
+                                          uint64_t expected) {
     m17_completion_worker worker={0};
     pthread_t thread;
     worker.portal=portal;
     worker.ticket=ticket;
     worker.provider_status=status;
+    worker.borrowed_pixels=pixels?pixels->data:NULL;
+    worker.pixel_count=pixels?pixels->size_bytes:0u;
+    worker.expected_digest=expected;
     assert(pthread_create(&thread,NULL,m17_worker_complete,&worker)==0);
     assert(pthread_join(thread,NULL)==0);
     assert(worker.result==TM_PC_OK);
+    if (pixels) assert(worker.observed_digest==expected);
 }
 static ti_sg_analysis_terminal_v1 m17_take_terminal(ti_bridge *bridge,
                                                      uint64_t event_id,
@@ -239,6 +269,9 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
         TI_SG_TERMINAL_ENTRY_V1_INIT};
     ti_sg_terminal_delivery_v1 delivery=TI_SG_TERMINAL_DELIVERY_V1_INIT;
     ti_sg_analysis_terminal_v1 outcome={0};
+    ti_sg_async_borrow_v1 async_borrow=TI_SG_ASYNC_BORROW_V1_INIT;
+    tm_fs_cpu_view_v1 borrowed_view=TM_FS_CPU_VIEW_V1_INIT;
+    uint64_t expected_digest=0u;
     assert(raw && encoded);
     turbo_codec_registry_init();
     encode_cfg.width=TI_M17_W;encode_cfg.height=TI_M17_H;
@@ -326,6 +359,14 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
     assert(ti_sg_bridge_visit_pinned(&f.ctx,f.bridge,taken_b,
                                      m17_visit_analysis,&f)==TI_OK);
     assert(f.analysis_visits==2u);
+    expected_digest=m17_checksum(f.pixels,sizeof(f.pixels));
+    /* A wrong/tampered TAKEN ticket cannot lend pixel memory. */
+    {
+        ti_bridge_ticket_v1 tampered=taken_a;
+        tampered.generation++;
+        assert(ti_sg_bridge_begin_async_borrow(&f.ctx,f.bridge,tampered,
+                  &async_borrow,&borrowed_view)==TI_ESTALE);
+    }
 
     /* Reuse existing TurboMedia ProviderCompletion + OwnerDispatch, never
      * create a new executor/portal scheduler inside TurboInteract. */
@@ -349,7 +390,19 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
     /* Actual callback thread completes the originally admitted Portal
      * ticket. Only the Media Owner may deliver terminal values to Bridge. */
     assert(tm_pc_begin(portal,11u,&provider_a)==TM_PC_OK);
-    m17_complete_from_real_worker(portal,provider_a,0);
+    assert(ti_sg_bridge_begin_async_borrow(&f.ctx,f.bridge,taken_a,
+                   &async_borrow,&borrowed_view)==TI_OK);
+    assert(borrowed_view.size_bytes==TI_M17_I420);
+    assert(ti_sg_bridge_begin_async_borrow(&f.ctx,f.bridge,taken_a,
+                   &async_borrow,&borrowed_view)==TI_EBUSY);
+    m17_complete_from_real_worker(portal,provider_a,0,
+                                  &borrowed_view,expected_digest);
+    /* Worker JOIN must precede owner release; its callback tail is quiesced. */
+    assert(ti_sg_bridge_end_async_borrow(&f.ctx,&async_borrow,
+                                         &borrowed_view)==TI_OK);
+    assert(borrowed_view.data==NULL && borrowed_view.size_bytes==0u);
+    assert(ti_sg_bridge_end_async_borrow(&f.ctx,&async_borrow,
+                                         &borrowed_view)==TI_ESTALE);
     assert(tm_od_step_completion(media_owner,&terminal)==TM_OD_OK);
     assert(terminal.correlation==11u &&
            terminal.outcome==TM_PC_COMPLETED);
@@ -359,8 +412,15 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
     /* Cancellation wins before callback completion: terminal is CANCELLED,
      * never silently upgraded to model/Agent success. */
     assert(tm_pc_begin(portal,12u,&provider_b)==TM_PC_OK);
+    assert(ti_sg_bridge_begin_async_borrow(&f.ctx,f.bridge,taken_b,
+                   &async_borrow,&borrowed_view)==TI_OK);
     assert(tm_pc_request_cancel(portal,provider_b)==TM_PC_OK);
-    m17_complete_from_real_worker(portal,provider_b,99);
+    /* Cancellation never revokes in-use borrowed pixels before worker JOIN.
+     * A real worker reads them, but Portal terminal remains CANCELLED. */
+    m17_complete_from_real_worker(portal,provider_b,99,
+                                  &borrowed_view,expected_digest);
+    assert(ti_sg_bridge_end_async_borrow(&f.ctx,&async_borrow,
+                                         &borrowed_view)==TI_OK);
     terminal=(tm_pc_result_v1)TM_PC_RESULT_V1_INIT;
     assert(tm_od_step_completion(media_owner,&terminal)==TM_OD_OK);
     assert(terminal.correlation==12u &&
@@ -373,7 +433,7 @@ void test_m17_real_codec_frame_to_turbointeract_bridge(void) {
      * fact for the same pinned AnalysisRequest. The existing Owner retains
      * the failed terminal as TAKEN until explicit reconciliation. */
     assert(tm_pc_begin(portal,11u,&duplicate)==TM_PC_OK);
-    m17_complete_from_real_worker(portal,duplicate,0);
+    m17_complete_from_real_worker(portal,duplicate,0,NULL,0u);
     terminal=(tm_pc_result_v1)TM_PC_RESULT_V1_INIT;
     assert(tm_od_step_completion(media_owner,&terminal)==TM_OD_EDELIVERY);
     assert(tm_od_pending_completion(media_owner,&terminal)==TM_OD_OK &&

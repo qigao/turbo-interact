@@ -77,6 +77,42 @@ TI_API ti_status ti_sg_bridge_visit_pinned(
     ti_sg_bridge_frame_visit_fn callback, void *user);
 
 
+
+/* An explicit owner-acquired CPU FrameLease can be lent read-only to a
+ * Host-owned asynchronous Provider worker. The worker may READ the immutable
+ * pixels but MUST NOT call FrameStore, Bridge or ActionOwner. It must exit
+ * and join BEFORE the Media Owner returns this Lease. This does not start a
+ * thread, copy pixels, prolong an unpinned frame or transfer Store ownership.
+ *
+ * The original TAKEN Bridge request owns its separate FramePin throughout.
+ * Releasing the Lease is NOT settlement of the Bridge request/Portal ticket.
+ * The caller must keep Context, Store and provider code generation alive
+ * through callback join, end_async_borrow and original terminal settlement.
+ */
+typedef struct ti_sg_async_borrow_v1 {
+    uint32_t size, version;
+    tm_fs_lease_v1 lease;   /* explicit one-shot borrowed lease credit */
+    ti_bridge_ticket_v1 request_ticket; /* original TAKEN identity */
+    uint64_t frame_id;
+} ti_sg_async_borrow_v1;
+#define TI_SG_ASYNC_BORROW_V1_INIT {sizeof(ti_sg_async_borrow_v1),TI_ABI_VERSION,{0},{0},0u}
+
+/* Media Owner ONLY, after ti_bridge_take. Output view.data is borrowed
+ * until end_async_borrow succeeds. No separate retry or new Pin is acquired. */
+TI_API ti_status ti_sg_bridge_begin_async_borrow(
+    ti_sg_bridge_context_v1 *context, ti_bridge *bridge,
+    ti_bridge_ticket_v1 taken_request,
+    ti_sg_async_borrow_v1 *out_borrow,
+    tm_fs_cpu_view_v1 *out_view);
+
+/* Media Owner ONLY, after all Provider workers reading out_view joined.
+ * Clears the passed view on success. Does not release the original Bridge
+ * Pin, which must be settled by its own TAKEN request ticket. */
+TI_API ti_status ti_sg_bridge_end_async_borrow(
+    ti_sg_bridge_context_v1 *context,
+    ti_sg_async_borrow_v1 *borrow,
+    tm_fs_cpu_view_v1 *view);
+
 /* M17d asynchronous PROVIDER STATUS → typed Bridge terminal contract.
  * This is not a model inference result or a new executor. A Host-owned
  * Provider callback thread calls tm_pc_complete(); the existing Media Owner

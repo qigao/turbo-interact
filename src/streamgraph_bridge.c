@@ -374,3 +374,80 @@ int ti_sg_bridge_emit_terminal(void *delivery_context,
     }
     return 0;
 }
+
+
+/* Exact owner-local allocation of a FrameLease before lending immutable
+ * pixel bytes to an already admitted Host-owned Provider worker. */
+ti_status ti_sg_bridge_begin_async_borrow(
+    ti_sg_bridge_context_v1 *c, ti_bridge *b,
+    ti_bridge_ticket_v1 taken, ti_sg_async_borrow_v1 *out,
+    tm_fs_cpu_view_v1 *view) {
+    ti_bridge_event_v1 event=TI_BRIDGE_EVENT_V1_INIT;
+    tm_fs_frame_ref_v1 ref=TM_FS_FRAME_REF_V1_INIT;
+    tm_fs_frame_metadata_v1 meta=TM_FS_FRAME_METADATA_V1_INIT;
+    tm_fs_lease_v1 lease={0};
+    tm_fs_pin_v1 pin={0};
+    tm_fs_status fs;
+    ti_status rc;
+    uint64_t token=0u;
+    if (!c || !b || !out || !view || !context_valid(c))
+        return TI_EINVAL;
+    if (out->version!=TI_ABI_VERSION ||
+        out->size!=sizeof(*out) ||
+        view->version!=TM_FS_ABI_V1 ||
+        view->size!=sizeof(*view)) return TI_EVERSION;
+    if (out->lease.ticket_id || out->frame_id || view->data ||
+        view->size_bytes) return TI_EBUSY;
+    rc=ti_bridge_taken_event(b,taken,&event);
+    if (rc!=TI_OK) return rc;
+    if (event.header.kind!=TI_EVENT_ANALYSIS_REQUEST ||
+        !event.has_frame || !event.pin_frame ||
+        event.header.session_generation!=c->source_session_generation)
+        return TI_ECONFLICT;
+    rc=to_upstream(&event.frame,&ref);
+    if (rc!=TI_OK) return rc;
+    rc=validate_source(c,&ref,&meta);
+    if (rc!=TI_OK || event.header.producer_sequence!=meta.packet_sequence)
+        return TI_ESTALE;
+    rc=ti_bridge_borrow_pin_token(b,taken,&token);
+    if (rc!=TI_OK) return rc;
+    pin.store_id=c->store_id;
+    pin.store_generation=c->store_generation;
+    pin.ticket_id=token;
+    fs=tm_fs_acquire_pinned(c->store,&pin,&lease);
+    if (fs!=TM_FS_OK) return frame_status(fs);
+    fs=tm_fs_map_cpu(c->store,&lease,view);
+    if (fs!=TM_FS_OK) {
+        (void)tm_fs_release_lease(c->store,&lease);
+        return frame_status(fs);
+    }
+    out->lease=lease;
+    out->request_ticket=taken;
+    out->frame_id=ref.frame_id;
+    return TI_OK;
+}
+
+ti_status ti_sg_bridge_end_async_borrow(
+    ti_sg_bridge_context_v1 *c, ti_sg_async_borrow_v1 *borrow,
+    tm_fs_cpu_view_v1 *view) {
+    tm_fs_status fs;
+    if (!c || !c->store || !borrow || !view) return TI_EINVAL;
+    if (borrow->version!=TI_ABI_VERSION ||
+        borrow->size!=sizeof(*borrow) ||
+        view->version!=TM_FS_ABI_V1 ||
+        view->size!=sizeof(*view)) return TI_EVERSION;
+    if (!borrow->lease.ticket_id || !borrow->frame_id)
+        return TI_ESTALE;
+    /* A revoked display/session does not magically release the old
+     * Store Lease: this is the original owning context and must still
+     * release it AFTER all worker callbacks have quiesced. */
+    fs=tm_fs_release_lease(c->store,&borrow->lease);
+    if (fs!=TM_FS_OK) return frame_status(fs);
+    memset(&borrow->lease,0,sizeof(borrow->lease));
+    memset(&borrow->request_ticket,0,sizeof(borrow->request_ticket));
+    borrow->frame_id=0u;
+    view->data=NULL;
+    view->size_bytes=0u;
+    return TI_OK;
+}
+
