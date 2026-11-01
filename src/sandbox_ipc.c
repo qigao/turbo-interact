@@ -30,6 +30,7 @@
 #include <sys/ucred.h>
 #endif
 #include <poll.h>
+#include <time.h>
 #include <unistd.h>
 #endif
 
@@ -194,15 +195,45 @@ static int ti_ipc_peer_uid(int fd, uint32_t *uid) {
 #endif
 }
 
-static int ti_ipc_recv_line(int fd, char *out, size_t max) {
+/* One absolute monotonic deadline for accept + all read/write events.
+ * Per-recv SO_RCVTIMEO alone is insufficient against slow trickle traffic. */
+static uint64_t ti_ipc_time_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0 || ts.tv_sec < 0) return 0u;
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static int ti_ipc_wait_ready(int fd, short events, uint64_t end_ns) {
+    for (;;) {
+        struct pollfd pfd;
+        uint64_t now = ti_ipc_time_ns();
+        int wait_ms;
+        int n;
+        if (!now || now >= end_ns) return 0;
+        wait_ms = (int)((end_ns - now + 999999u) / 1000000u);
+        pfd.fd = fd;
+        pfd.events = events;
+        pfd.revents = 0;
+        n = poll(&pfd, 1, wait_ms);
+        if (n > 0) return (pfd.revents & events) != 0;
+        if (n == 0) return 0;
+        if (errno != EINTR) return 0;
+    }
+}
+
+static int ti_ipc_recv_line(int fd, char *out, size_t max,
+                            uint64_t end_ns) {
     size_t count = 0u;
     for (;;) {
         char chunk[512];
-        ssize_t n = recv(fd, chunk, sizeof(chunk), 0);
+        ssize_t n;
         size_t i;
+        if (!ti_ipc_wait_ready(fd, POLLIN, end_ns)) return 0;
+        n = recv(fd, chunk, sizeof(chunk), 0);
         if (n == 0) return 0; /* Partial / newline-less is not a request. */
         if (n < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
             return 0;
         }
         for (i = 0u; i < (size_t)n; i++) {
@@ -387,7 +418,8 @@ static ti_status ti_ipc_apply(ti_sandbox_ipc *s, const char *json,
 }
 
 static int ti_ipc_send_reply(int fd, ti_status status,
-                             const ti_action_receipt_v1 *receipt) {
+                             const ti_action_receipt_v1 *receipt,
+                             uint64_t end_ns) {
     char line[128];
     size_t total;
     size_t pos = 0u;
@@ -400,17 +432,20 @@ static int ti_ipc_send_reply(int fd, ti_status status,
     total = (size_t)count;
     while (pos < total) {
         ssize_t n;
+        if (!ti_ipc_wait_ready(fd, POLLOUT, end_ns)) return 0;
 #if defined(MSG_NOSIGNAL)
         n = send(fd, line + pos, total - pos, MSG_NOSIGNAL);
 #else
         n = send(fd, line + pos, total - pos, 0);
 #endif
         if (n > 0) pos += (size_t)n;
-        else if (n < 0 && errno == EINTR) continue;
+        else if (n < 0 && (errno == EINTR || errno == EAGAIN ||
+                            errno == EWOULDBLOCK)) continue;
         else return 0;
     }
     return 1;
 }
+
 #endif /* !WIN32 */
 
 ti_status ti_sandbox_ipc_open(const ti_sandbox_ipc_config_v1 *config,
@@ -479,21 +514,31 @@ ti_status ti_sandbox_ipc_serve_one(ti_sandbox_ipc *s,
     ti_ipc_unlock(s);
 #if !defined(_WIN32)
     {
-        struct pollfd pfd;
+        const uint64_t started_ns = ti_ipc_time_ns();
+        const uint64_t end_ns = started_ns + (uint64_t)timeout_ms * 1000000u;
         struct timeval timeout;
         int fd = -1;
         uint32_t peer_uid = 0u;
         char line[TI_SANDBOX_IPC_MAX_LINE + 1u];
         ti_action_receipt_v1 receipt = TI_ACTION_RECEIPT_V1_INIT;
-        pfd.fd = s->server_fd;
-        pfd.events = POLLIN;
-        pfd.revents = 0;
-        if (poll(&pfd, 1, (int)timeout_ms) <= 0 || !(pfd.revents & POLLIN)) {
+        uint64_t sampled;
+        int flags;
+        if (!started_ns || end_ns <= started_ns) {
+            status = TI_EUNSUPPORTED;
+            goto finish;
+        }
+        if (!ti_ipc_wait_ready(s->server_fd, POLLIN, end_ns)) {
             status = TI_EEXPIRED;
             goto finish;
         }
         fd = accept(s->server_fd, NULL, NULL);
         if (fd < 0) { status = TI_EUNSUPPORTED; goto finish; }
+        flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+            status = TI_EUNSUPPORTED;
+            close(fd);
+            goto finish;
+        }
         (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
         timeout.tv_sec = (time_t)(timeout_ms / 1000u);
         timeout.tv_usec = (suseconds_t)((timeout_ms % 1000u) * 1000u);
@@ -507,12 +552,23 @@ ti_status ti_sandbox_ipc_serve_one(ti_sandbox_ipc *s,
 #endif
         if (!ti_ipc_peer_uid(fd, &peer_uid) || peer_uid != s->config.peer_uid) {
             status = TI_EAUTH;
-        } else if (!ti_ipc_recv_line(fd, line, TI_SANDBOX_IPC_MAX_LINE)) {
-            status = TI_EINVAL;
+        } else if (!ti_ipc_recv_line(fd, line, TI_SANDBOX_IPC_MAX_LINE, end_ns)) {
+            status = ti_ipc_time_ns() >= end_ns ? TI_EEXPIRED : TI_EINVAL;
         } else {
-            status = ti_ipc_apply(s, line, peer_uid, now_ns, &receipt);
+            sampled = ti_ipc_time_ns();
+            if (!sampled || sampled >= end_ns || sampled < started_ns ||
+                now_ns > UINT64_MAX - (sampled - started_ns)) {
+                status = TI_EEXPIRED;
+            } else {
+                /* The original trusted host clock is advanced by the actual
+                 * accept/read elapsed time, so a slow sender cannot revive an
+                 * action whose deadline already passed during socket reads. */
+                status = ti_ipc_apply(s, line, peer_uid,
+                                      now_ns + sampled - started_ns, &receipt);
+            }
         }
-        if (!ti_ipc_send_reply(fd, status, &receipt) && status == TI_OK) status = TI_EUNSUPPORTED;
+        if (!ti_ipc_send_reply(fd, status, &receipt, end_ns) &&
+            status == TI_OK) status = TI_EUNSUPPORTED;
         close(fd);
 finish:
         ti_ipc_wipe(line, sizeof(line));

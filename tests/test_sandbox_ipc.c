@@ -177,6 +177,15 @@ static void test_real_unix_socket_and_authorization(void) {
     assert(strlen(token) == 64u);
     assert(strlen(path) > 0u);
     assert(ti_sandbox_ipc_serve_one(f.ipc, 1000000000u, 10u) == TI_EEXPIRED);
+    {
+        /* A client that sends one byte and never finishes a line cannot
+         * reset the overall RPC deadline by dribbling input. */
+        int slow_fd = client_connect(path);
+        send_str(slow_fd, "{");
+        assert(ti_sandbox_ipc_serve_one(f.ipc, 1000000000u, 50u) == TI_EEXPIRED);
+        close(slow_fd);
+        assert(f.grants == 0u && f.effects == 0u);
+    }
 
     /* Peer OS credentials come from SO_PEERCRED/getpeereid; a JSON UID is
      * unknown and rejected rather than treated as an identity claim. */
