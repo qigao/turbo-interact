@@ -1,6 +1,7 @@
 package io.turbointeract.android
 
 import android.os.SystemClock
+import java.io.File
 
 /**
  * Typed host request. The JNI protocol is private to this Android library:
@@ -123,6 +124,18 @@ internal class NativeActionPeer(
     }
 }
 
+/**
+ * Only a trusted host launching one sandbox command may receive these values.
+ * Never put the per-run token in logs, a model message, argv, or persistent files.
+ * Actual socket peer UID is read by the OS; there is no caller-supplied UID.
+ */
+data class NativeSandboxCredentials(val socketPath: String, val tokenHex: String) {
+    init {
+        require(socketPath.startsWith("/") && socketPath.length < 104 && '\u0000' !in socketPath)
+        require(tokenHex.length == 64 && tokenHex.all { it in '0'..'9' || it in 'a'..'f' })
+    }
+}
+
 /** Declared in the production AAR's NDK shared target, built from root C11. */
 internal object NativeActionJni {
     init { System.loadLibrary("turbo_interact_android_jni") }
@@ -138,6 +151,12 @@ internal object NativeActionJni {
                          actionId: Long, attemptId: Long): Boolean
     external fun updateGeometry(handle: Long, geometryGeneration: Long): Int
     external fun revoke(handle: Long): Int
+    /** Uses the same native ti_action_owner pointer as submit(), not a new owner. */
+    external fun sandboxOpen(handle: Long, privateDirectory: String,
+                             taskId: Long, sandboxRunId: Long, allowedTools: Int): Int
+    external fun sandboxCredentials(handle: Long): Array<String>?
+    external fun sandboxServeOne(handle: Long, nowNs: Long, timeoutMs: Int): Int
+    external fun sandboxClose(handle: Long): Int
     external fun destroy(handle: Long): Int
 }
 
@@ -211,6 +230,72 @@ class NativeAndroidActionOwner private constructor(
         finally { unpin() }
     }
 
+    /**
+     * Start one optional host-side sandbox endpoint attached to THIS SAME
+     * ActionOwner instance. Caller owns a real, pre-existing private app
+     * directory and passes the credentials only to its authorized sandbox
+     * child; the library neither launches PRoot nor installs an APK.
+     *
+     * Device-side inputs always require the native host's live grant and
+     * the authenticated Shell's one-time reverse Binder confirmation.
+     */
+    fun openSandbox(
+        privateDirectory: File,
+        taskId: Long,
+        sandboxRunId: Long,
+        allowedTools: Int = SANDBOX_TAP or SANDBOX_BACK,
+    ): NativeSandboxCredentials {
+        require(taskId > 0 && sandboxRunId > 0)
+        require(allowedTools in 1..(SANDBOX_TAP or SANDBOX_BACK))
+        require(privateDirectory.isDirectory && privateDirectory.isAbsolute)
+        val h = pin()
+        check(h != 0L) { "canonical ActionOwner is closed" }
+        try {
+            val status = NativeActionJni.sandboxOpen(
+                h, privateDirectory.absolutePath, taskId, sandboxRunId, allowedTools
+            )
+            check(status == 0) { "sandbox IPC refused: $status" }
+            val credentials = NativeActionJni.sandboxCredentials(h)
+            if (credentials?.size != 2) {
+                NativeActionJni.sandboxClose(h)
+                error("sandbox IPC credentials unavailable")
+            }
+            return try { NativeSandboxCredentials(credentials[0], credentials[1]) }
+            catch (ex: IllegalArgumentException) {
+                NativeActionJni.sandboxClose(h)
+                throw ex
+            }
+        } finally { unpin() }
+    }
+
+    /**
+     * Blocking, bounded OS-credential-verified Unix RPC; run on a host IO
+     * worker. Caller must provide the Android elapsedRealtimeNanos clock
+     * used by the same native ActionOwner. One connection, one action.
+     */
+    fun serveSandboxOnce(
+        timeoutMs: Int = 1_000,
+        nowNs: Long = SystemClock.elapsedRealtimeNanos(),
+    ): Int {
+        require(timeoutMs in 1..10_000 && nowNs > 0)
+        val h = pin()
+        if (h == 0L) return -5
+        return try { NativeActionJni.sandboxServeOne(h, nowNs, timeoutMs) }
+        finally { unpin() }
+    }
+
+    /**
+     * Close the sandbox listener and wipe credentials; this does NOT revoke
+     * independently authorized model actions. A serving RPC returns false,
+     * in which case the caller should retry after it has finished.
+     */
+    fun closeSandbox(): Boolean {
+        val h = pin(allowClosing = true)
+        if (h == 0L) return false
+        return try { NativeActionJni.sandboxClose(h) == 0 }
+        finally { unpin() }
+    }
+
     /** False means BUSY: caller must retry after all in-flight callbacks settle. */
     fun tryClose(): Boolean = synchronized(monitor) {
         closing = true
@@ -225,6 +310,9 @@ class NativeAndroidActionOwner private constructor(
     }
 
     companion object {
+        const val SANDBOX_TAP = 1
+        const val SANDBOX_BACK = 2
+
         fun create(
             ref: DisplayRef,
             shell: ITurboDisplayShell,
