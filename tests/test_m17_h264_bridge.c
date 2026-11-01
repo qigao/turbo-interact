@@ -91,8 +91,13 @@ static int m17_visit_processor(void *user,const tm_fs_frame_ref_v1 *frame,
     f->ctx.capture_session_lo=99u;
     f->ctx.stream_generation=12u;
     config.capacity=3u;config.incarnation=99u;
-    limits.max_message_bytes=sizeof(obs);
-    limits.max_inflight_bytes=2u*sizeof(obs);
+    /* Result terminal has more provenance fields than the Observation.
+     * The Bridge must pre-budget the LARGEST admitted typed message, not
+     * silently grow its queue when a Provider Completion arrives. */
+    limits.max_message_bytes=(uint32_t)(
+        sizeof(ti_sg_analysis_terminal_v1)>sizeof(obs) ?
+        sizeof(ti_sg_analysis_terminal_v1) : sizeof(obs));
+    limits.max_inflight_bytes=2u*limits.max_message_bytes;
     assert(ti_sg_bridge_configure(&f->ctx,&config)==TI_OK);
     assert(ti_bridge_create_with_payload_limits(&config,&limits,&f->bridge)==TI_OK);
 
