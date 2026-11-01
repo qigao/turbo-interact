@@ -419,6 +419,39 @@ static void test_m17e_canonical_terminal_fact_codec(void) {
            restored.device_session_id==43u &&
            restored.capture_session_hi==88u &&
            restored.packet_sequence==11u && restored.pts==33000u);
+    {
+        ti_m17e_fact_scope_v1 scope=TI_M17E_FACT_SCOPE_V1_INIT;
+        scope.plan_generation=19u;
+        scope.source_session_generation=77u;
+        scope.provider_generation=55u;
+        scope.device_session_id=43u;
+        scope.device_session_generation=6u;
+        scope.display_id=7u;
+        scope.geometry_generation=5u;
+        scope.capture_session_hi=88u;
+        scope.capture_session_lo=99u;
+        scope.stream_generation=12u;
+        assert(ti_m17e_terminal_fact_match_scope(&restored,&scope)==TI_OK);
+        scope.geometry_generation++;
+        assert(ti_m17e_terminal_fact_match_scope(&restored,&scope)==TI_ESTALE);
+        scope.geometry_generation--;
+        scope.provider_generation++;
+        assert(ti_m17e_terminal_fact_match_scope(&restored,&scope)==TI_ESTALE);
+        scope.provider_generation--;
+        scope.capture_session_lo++;
+        assert(ti_m17e_terminal_fact_match_scope(&restored,&scope)==TI_ESTALE);
+        scope.capture_session_lo--;
+        scope.stream_generation++;
+        assert(ti_m17e_terminal_fact_match_scope(&restored,&scope)==TI_ESTALE);
+        scope.stream_generation--;
+        scope.source_session_generation++;
+        assert(ti_m17e_terminal_fact_match_scope(&restored,&scope)==TI_ESTALE);
+        scope.source_session_generation--;
+        scope.plan_generation++;
+        assert(ti_m17e_terminal_fact_match_scope(&restored,&scope)==TI_ESTALE);
+        scope.plan_generation--;
+        assert(ti_m17e_terminal_fact_match_scope(&restored,&scope)==TI_OK);
+    }
     wire[76]=1u; /* no unknown future ABI bits */
     assert(ti_m17e_terminal_fact_decode(wire,used,&restored)==TI_ECONFLICT);
     wire[76]=0u;

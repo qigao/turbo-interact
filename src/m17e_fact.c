@@ -48,6 +48,35 @@ ti_status ti_m17e_terminal_fact_validate(const ti_m17e_terminal_fact_v1 *f) {
     return TI_OK;
 }
 
+ti_status ti_m17e_terminal_fact_match_scope(
+    const ti_m17e_terminal_fact_v1 *f,
+    const ti_m17e_fact_scope_v1 *scope) {
+    ti_status rc;
+    if (!scope) return TI_EINVAL;
+    if (scope->version!=TI_M17E_FACT_ABI_V1) return TI_EVERSION;
+    if (scope->size!=sizeof(*scope) || scope->reserved ||
+        !scope->plan_generation || !scope->source_session_generation ||
+        !scope->provider_generation || !scope->device_session_id ||
+        !scope->device_session_generation || !scope->display_id ||
+        !scope->geometry_generation ||
+        (!scope->capture_session_hi && !scope->capture_session_lo) ||
+        !scope->stream_generation) return TI_EINVAL;
+    rc=ti_m17e_terminal_fact_validate(f);
+    if (rc!=TI_OK) return rc;
+    if (f->plan_generation!=scope->plan_generation ||
+        f->source_session_generation!=scope->source_session_generation ||
+        f->provider_generation!=scope->provider_generation ||
+        f->device_session_id!=scope->device_session_id ||
+        f->device_session_generation!=scope->device_session_generation ||
+        f->display_id!=scope->display_id ||
+        f->geometry_generation!=scope->geometry_generation ||
+        f->capture_session_hi!=scope->capture_session_hi ||
+        f->capture_session_lo!=scope->capture_session_lo ||
+        f->stream_generation!=scope->stream_generation)
+        return TI_ESTALE;
+    return TI_OK;
+}
+
 ti_status ti_m17e_terminal_fact_from_taken(
     ti_sg_bridge_context_v1 *c,ti_bridge *bridge,
     ti_bridge_ticket_v1 taken,uint64_t plan,uint64_t provider,

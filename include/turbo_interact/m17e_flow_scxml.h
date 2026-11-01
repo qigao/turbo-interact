@@ -38,6 +38,7 @@ typedef struct ti_m17e_flow_completion_v1 {
 TI_API ti_status ti_m17e_flow_publish_status(
     turbo_flow_t *flow,const char *source_name,
     const ti_m17e_terminal_fact_v1 *fact,
+    const ti_m17e_fact_scope_v1 *trusted_active_scope,
     tm_pc_portal *portal,
     ti_m17e_flow_completion_v1 *callback_context,
     int *out_flow_status);
@@ -52,7 +53,7 @@ TI_API ti_status ti_m17e_flow_publish_status(
  */
 TI_API ti_status ti_m17e_scxml_admit_provider_status(
     scxml_session *session,
-    uint64_t current_session_generation, uint64_t current_plan_generation,
+    const ti_m17e_fact_scope_v1 *trusted_active_scope,
     const ti_m17e_terminal_fact_v1 *fact,
     cflow_mailbox_status *out_mailbox_status);
 

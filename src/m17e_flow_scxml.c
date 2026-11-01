@@ -29,6 +29,7 @@ static ti_status flow_rejection(int code) {
 ti_status ti_m17e_flow_publish_status(
     turbo_flow_t *flow,const char *source,
     const ti_m17e_terminal_fact_v1 *f,
+    const ti_m17e_fact_scope_v1 *scope,
     tm_pc_portal *portal,ti_m17e_flow_completion_v1 *ctx,
     int *flow_status) {
     turbo_flow_msg_t msg;
@@ -43,6 +44,8 @@ ti_status ti_m17e_flow_publish_status(
         ctx->version!=TI_ABI_VERSION || ctx->size!=sizeof(*ctx) ||
         ctx->portal || ctx->ticket.incarnation || ctx->correlation)
         return TI_EINVAL;
+    rc=ti_m17e_terminal_fact_match_scope(f,scope);
+    if (rc!=TI_OK) return rc; /* pre-effect generation gate */
     rc=ti_m17e_terminal_fact_encode(f,bytes,sizeof(bytes),&n);
     if (rc!=TI_OK) return rc;
     if (n!=TI_M17E_TERMINAL_WIRE_BYTES) return TI_ECONFLICT;
@@ -78,20 +81,17 @@ ti_status ti_m17e_flow_publish_status(
 }
 
 ti_status ti_m17e_scxml_admit_provider_status(
-    scxml_session *session,uint64_t session_generation,
-    uint64_t plan_generation,const ti_m17e_terminal_fact_v1 *f,
+    scxml_session *session,const ti_m17e_fact_scope_v1 *scope,
+    const ti_m17e_terminal_fact_v1 *f,
     cflow_mailbox_status *out_status) {
     scxml_event_metadata meta={0};
     cflow_mailbox_status status;
     const char *name;
     ti_status rc;
-    if (!session || !out_status || !session_generation ||
-        !plan_generation) return TI_EINVAL;
+    if (!session || !out_status) return TI_EINVAL;
     *out_status=CFLOW_MAILBOX_INVALID_ARGUMENT;
-    rc=ti_m17e_terminal_fact_validate(f);
+    rc=ti_m17e_terminal_fact_match_scope(f,scope);
     if (rc!=TI_OK) return rc;
-    if (f->source_session_generation!=session_generation ||
-        f->plan_generation!=plan_generation) return TI_ESTALE;
 
     switch(f->outcome) {
         case TM_PC_COMPLETED:

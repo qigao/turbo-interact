@@ -40,6 +40,21 @@ typedef struct ti_m17e_terminal_fact_v1 {
 TI_API ti_status ti_m17e_terminal_fact_validate(
     const ti_m17e_terminal_fact_v1 *fact);
 
+/* A TRUSTED Host-owned current source scope, never obtained from wire.
+ * All plan/Provider/session/display/capture/stream generations are fenced. */
+typedef struct ti_m17e_fact_scope_v1 {
+    uint32_t size, version;
+    uint64_t plan_generation, source_session_generation, provider_generation;
+    uint64_t device_session_id, device_session_generation;
+    uint32_t display_id, reserved;
+    uint64_t geometry_generation, capture_session_hi, capture_session_lo;
+    uint64_t stream_generation;
+} ti_m17e_fact_scope_v1;
+#define TI_M17E_FACT_SCOPE_V1_INIT {sizeof(ti_m17e_fact_scope_v1),TI_M17E_FACT_ABI_V1,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u,0u}
+TI_API ti_status ti_m17e_terminal_fact_match_scope(
+    const ti_m17e_terminal_fact_v1 *fact,
+    const ti_m17e_fact_scope_v1 *trusted_active_scope);
+
 /* Inspect the ACTUAL TAKEN Bridge result, never a supplied or guessed event.
  * This may succeed after FrameStore retirement, because a status fact is a
  * permanently owned value while FrameRef was only a weak pixel identity.

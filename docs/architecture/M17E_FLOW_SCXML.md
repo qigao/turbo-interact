@@ -10,6 +10,13 @@ The existing native `ti_bridge_test` (Linux/macOS/Windows llvm-mingw and Linux A
 
 TIFA header layout (offsets in bytes): magic 0, version 4, size 6, kind 8, outcome 12, completion_observed 16, provider_status 20, event_id 24, correlation 32, plan_generation 40, source_session 48, device_session 56, device session generation 64, display_id 72, reserved 76, geometry_generation 80, capture UUID 88/96, stream_generation 104, packet_sequence 112, provider_generation 120, PTS/DTS 128/136, timebase 144/148, schema_id 152, reserved 156. Exactly 160 bytes; zero reserved bytes; no trailing data accepted. This is **content encoding, not transport authentication**.
 
+A `ti_m17e_fact_scope_v1` is supplied by the **trusted Host owner** for
+every external Flow/SCXML admission. Every plan/provider/source/device/display/
+geometry/capture/stream generation must match before an external API call.
+The same pure C11 gate runs on Linux, macOS, Windows and sanitizers.
+The Host must additionally prove its Flow/SCXML runtime pointer belongs
+to this active scope; a byte array does not authenticate the runtime.
+
 ## 2. Actual SDK adapter — explicitly optional, NOT yet release-qualified
 
 `TI_WITH_TURBOFLOW_SCXML=ON` requires `TI_WITH_TURBOMEDIA_STREAMGRAPH=ON` and the **real installed** `TurboFlow::Graph` and `TurboSCXML::SCXML` imported SDK targets. Missing dependencies cause a CMake failure. No faux SDK, generated consumer project, mock external Flow or duplicate Statechart is available in production. The regular `TurboInteract::Core` and `TurboInteract::StreamGraphBridge` remain independent when OFF.
