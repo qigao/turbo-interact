@@ -216,8 +216,167 @@ static void test_generation_and_unannotated_reject_before_pin(void) {
     assert(tm_fs_destroy(s)==TM_FS_OK);
 }
 
+
+/* A full actual Bridge MUST cause the canonical Media Owner Dispatcher
+ * to retain its TAKEN Portal credit for explicit reconciliation. Neither
+ * the Provider result nor the pinned AnalysisRequest is silently retried,
+ * settled or re-emitted; store/queue/codec owners remain distinct.
+ *
+ * Existing ti_bridge_test on ALL native platforms, no extra fixture target.
+ */
+static tm_ex_source_result terminal_test_source(void *ctx, uint8_t *bytes,
+                                               size_t cap, size_t *written) {
+    (void)ctx;(void)bytes;(void)cap;
+    *written=0u;
+    return TM_EX_SOURCE_EOS;
+}
+static int terminal_test_visitor(void *ctx,const tm_fs_frame_ref_v1 *ref,
+                                  const tm_fs_cpu_view_v1 *pixels) {
+    (void)ctx;(void)ref;(void)pixels;
+    return 0;
+}
+static tm_sg_port_v1 terminal_test_port(const char *name,uint32_t direction) {
+    tm_sg_port_v1 p=TM_SG_PORT_V1_INIT;
+    p.name=name;p.direction=direction;
+    p.kind=TM_SG_VIDEO_FRAME;p.format_id=1u;
+    p.memory_domain=TM_SG_MEMORY_CPU;
+    p.timebase_num=1u;p.timebase_den=1000000u;
+    return p;
+}
+static void test_terminal_queue_full_remains_pending(void) {
+    const uint8_t bytes[6]={3u,2u,1u,4u,5u,6u};
+    tm_fs_store *store=create_store();
+    tm_fs_frame_ref_v1 ref=TM_FS_FRAME_REF_V1_INIT;
+    tm_fs_frame_metadata_v1 meta=metadata_for(11u);
+    ti_sg_bridge_context_v1 ctx;
+    ti_bridge_config_v1 bcfg=TI_BRIDGE_CONFIG_V1_INIT;
+    ti_bridge_payload_limits_v1 budget=TI_BRIDGE_PAYLOAD_LIMITS_V1_INIT;
+    ti_bridge *bridge=NULL;
+    ti_event_header_v1 request=header(TI_EVENT_ANALYSIS_REQUEST,123u,0u);
+    ti_bridge_ticket_v1 prepared={0},taken={0};
+    ti_bridge_event_v1 stored=TI_BRIDGE_EVENT_V1_INIT;
+    ti_sg_terminal_entry_v1 entry=TI_SG_TERMINAL_ENTRY_V1_INIT;
+    ti_sg_terminal_delivery_v1 terminal_ctx=TI_SG_TERMINAL_DELIVERY_V1_INIT;
+    tm_sg_port_v1 source_port=terminal_test_port("out",TM_SG_OUTPUT);
+    tm_sg_port_v1 intermediate[2]={
+        TM_SG_PORT_V1_INIT,TM_SG_PORT_V1_INIT};
+    tm_sg_port_v1 sink_port=terminal_test_port("in",TM_SG_INPUT);
+    tm_sg_node_v1 nodes[3]={
+        TM_SG_NODE_V1_INIT,TM_SG_NODE_V1_INIT,TM_SG_NODE_V1_INIT};
+    tm_sg_edge_v1 edges[2]={
+        TM_SG_EDGE_V1_INIT,TM_SG_EDGE_V1_INIT};
+    tm_sg_program *program=NULL;
+    tm_ex_config_v1 ex_cfg=TM_EX_CONFIG_V1_INIT;
+    tm_ex_binding_v1 binds[3]={
+        TM_EX_BINDING_V1_INIT,TM_EX_BINDING_V1_INIT,TM_EX_BINDING_V1_INIT};
+    tm_ex_owner *executor=NULL;
+    tm_ho_inbox *inbox=NULL;
+    tm_ho_config_v1 hcfg=TM_HO_CONFIG_V1_INIT;
+    tm_od_owner *owner=NULL;
+    tm_od_config_v1 ocfg=TM_OD_CONFIG_V1_INIT;
+    tm_pc_portal *portal=NULL;
+    tm_pc_config_v1 pcfg=TM_PC_CONFIG_V1_INIT;
+    tm_pc_ticket_v1 ticket={0};
+    tm_pc_result_v1 result=TM_PC_RESULT_V1_INIT;
+    tm_pc_result_v1 invalid=TM_PC_RESULT_V1_INIT;
+    tm_fs_frame_metadata_v1 still_pinned=TM_FS_FRAME_METADATA_V1_INIT;
+
+    assert(tm_fs_publish_cpu_with_metadata(store,bytes,sizeof(bytes),
+                                            77u,4u,&meta,&ref)==TM_FS_OK);
+    ctx=context_for(store,&ref);
+    bcfg.capacity=1u;bcfg.incarnation=430u;
+    budget.max_message_bytes=sizeof(ti_sg_analysis_terminal_v1);
+    budget.max_inflight_bytes=budget.max_message_bytes;
+    assert(ti_sg_bridge_configure(&ctx,&bcfg)==TI_OK);
+    assert(ti_bridge_create_with_payload_limits(&bcfg,&budget,&bridge)==TI_OK);
+    assert(ti_sg_bridge_prepare_analysis(&ctx,bridge,&ref,&request,NULL,0u,
+                                          &prepared)==TI_OK);
+    assert(ti_bridge_commit(bridge,prepared)==TI_OK);
+    assert(ti_bridge_take(bridge,&taken,&stored)==TI_OK);
+    assert(taken.slot==prepared.slot && stored.header.event_id==123u);
+    assert(tm_fs_retire(store,&ref)==TM_FS_EBUSY);
+
+    intermediate[0]=terminal_test_port("in",TM_SG_INPUT);
+    intermediate[1]=terminal_test_port("out",TM_SG_OUTPUT);
+    nodes[0].id="source";nodes[0].kind=TM_SG_SOURCE;
+    nodes[0].ports=&source_port;nodes[0].port_count=1u;
+    nodes[1].id="process";nodes[1].kind=TM_SG_PROCESSOR;
+    nodes[1].ports=intermediate;nodes[1].port_count=2u;
+    nodes[2].id="sink";nodes[2].kind=TM_SG_SINK;
+    nodes[2].ports=&sink_port;nodes[2].port_count=1u;
+    edges[0].source_node="source";edges[0].source_port="out";
+    edges[0].target_node="process";edges[0].target_port="in";
+    edges[1].source_node="process";edges[1].source_port="out";
+    edges[1].target_node="sink";edges[1].target_port="in";
+    assert(tm_sg_compile(nodes,3u,edges,2u,NULL,&program,NULL)==TM_SG_OK);
+    ex_cfg.max_frame_bytes=8u;
+    ex_cfg.source_session_generation=77u;ex_cfg.display_generation=4u;
+    ex_cfg.fanout.branch_count=1u;
+    ex_cfg.fanout.branches[0]=
+        (tm_fo_branch_config_v1)TM_FO_BRANCH_CONFIG_V1_INIT;
+    ex_cfg.fanout.branches[0].policy=TM_FO_ORDERED_LOSSLESS;
+    ex_cfg.fanout.branches[0].queue_depth=1u;
+    binds[0].node_id="source";binds[0].source_next=terminal_test_source;
+    binds[1].node_id="process";binds[1].visit=terminal_test_visitor;
+    binds[2].node_id="sink";binds[2].visit=terminal_test_visitor;
+    assert(tm_ex_create(program,store,&ex_cfg,binds,3u,&executor)==TM_EX_OK);
+    hcfg.capacity=1u;
+    assert(tm_ho_create(&hcfg,&inbox)==TM_HO_OK);
+    assert(tm_od_create(inbox,executor,store,&ocfg,&owner)==TM_OD_OK);
+    pcfg.capacity=1u;pcfg.provider_generation=66u;
+    assert(tm_pc_create(&pcfg,&portal)==TM_PC_OK);
+    entry.correlation=123u;entry.result_event_id=124u;
+    entry.request_ticket=taken;
+    terminal_ctx.source_context=&ctx;
+    terminal_ctx.bridge=bridge;
+    terminal_ctx.plan_generation=3u;terminal_ctx.provider_generation=66u;
+    terminal_ctx.result_schema_id=67u;
+    terminal_ctx.entries=&entry;terminal_ctx.entry_count=1u;
+    assert(tm_od_bind_completion(owner,portal,ti_sg_bridge_emit_terminal,
+                                 &terminal_ctx)==TM_OD_OK);
+    invalid.outcome=TM_PC_COMPLETED;
+    invalid.completion_observed=1u;
+    invalid.correlation=123u;
+    invalid.provider_generation=67u; /* Wrong provider generation rejected. */
+    assert(ti_sg_bridge_emit_terminal(&terminal_ctx,&invalid)!=0);
+    assert(entry.attempted==0u);
+
+    assert(tm_pc_begin(portal,123u,&ticket)==TM_PC_OK);
+    assert(tm_pc_complete(portal,ticket,0)==TM_PC_OK);
+    assert(tm_od_step_completion(owner,&result)==TM_OD_EDELIVERY);
+    assert(result.outcome==TM_PC_COMPLETED && result.correlation==123u);
+    assert(entry.attempted==1u);
+    assert(tm_od_pending_completion(owner,&result)==TM_OD_OK);
+    assert(tm_od_step_completion(owner,&result)==TM_OD_EBUSY);
+    assert(tm_od_destroy(owner)==TM_OD_EBUSY);
+    assert(ti_bridge_take(bridge,&prepared,&stored)==TI_EBUSY);
+    assert(tm_fs_get_metadata(store,&ref,&still_pinned)==TM_FS_OK);
+
+    /* Host now explicitly acknowledges that no downstream effect committed.
+     * No replay is permitted on the old Portal ticket or old request. */
+    assert(tm_od_settle_pending_completion(owner)==TM_OD_OK);
+    assert(tm_od_pending_completion(owner,&result)==TM_OD_EMPTY);
+    assert(tm_pc_complete(portal,ticket,0)==TM_PC_ESTALE);
+    assert(tm_pc_seal(portal)==TM_PC_OK);
+    assert(tm_ho_seal(inbox)==TM_HO_OK);
+    assert(tm_od_destroy(owner)==TM_OD_OK);
+    assert(tm_pc_destroy(portal)==TM_PC_OK);
+    assert(tm_ho_destroy(inbox)==TM_HO_OK);
+    assert(tm_ex_stop(executor)==TM_EX_OK);
+    assert(tm_ex_destroy(executor)==TM_EX_OK);
+    assert(ti_bridge_settle(bridge,taken)==TI_OK);
+    assert(ti_bridge_settle(bridge,taken)==TI_ESTALE);
+    assert(tm_fs_get_metadata(store,&ref,&still_pinned)==TM_FS_ESTALE);
+    assert(ti_bridge_seal(bridge)==TI_OK);
+    assert(ti_bridge_destroy(bridge)==TI_OK);
+    assert(tm_fs_seal(store)==TM_FS_OK);
+    assert(tm_fs_destroy(store)==TM_FS_OK);
+    tm_sg_program_destroy(program);
+}
+
 void test_real_turbomedia_frame_store_bridge(void) {
     test_real_store_observation_and_two_pinned_requests();
     test_generation_and_unannotated_reject_before_pin();
+    test_terminal_queue_full_remains_pending();
     puts("real TurboMedia FrameStore / TurboInteract GraphBridge: PASS");
 }
