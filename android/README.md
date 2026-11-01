@@ -141,6 +141,49 @@ The generated interface `ITurboDisplayShell` exposes only display create/release
 
 **Remaining device/runtime blockers:** this library has no bundled ADB transport or installing App; an actual embedding App must provide an authenticated transport and live grant source. The hidden Android API invocation paths have not been exercised on an Android phone. Current APK signer lookup is first qualified for the primary Android user; multi-user/work-profile package discovery needs separate conformance. C11 Action Owner JNI **runtime** proof, main-screen focus/IME proof, cross-process grant-revocation linearizability, physical touch/surface races, and input→compositor-frame causality remain independent gates.
 
+## M17 Android H.264 packet source (TurboMedia StreamGraph handoff)
+
+The existing `AndroidH264Capture` is an **actual Android MediaCodec
+encoder/Suface provider**, not a second TurboMedia decoder or scheduler.
+The authorized host calls `AuthorizedH264DisplayCreator.create` on the
+same `AuthorizedShellConnection` used for RGBA. It requests an AVC Baseline
+profile with no B frames, creates the MediaCodec InputSurface, invokes the
+existing authenticated Shell `createDisplay`, validates the exact
+`DisplayRef` through the shared `AuthorizedDisplaySurfaceCreator`, and
+binds that display to the capture **once**. Any failed or malformed Binder
+response closes the Shell and the MediaCodec Surface, not a guessed display.
+
+Each `pollPacket()` result contains an **owned copy** of bytes and a
+`H264CaptureStamp`: immutable device/session/display/geometry identity,
+random capture UUID bits, stream incarnation, monotonic packet sequence,
+MediaCodec PTS in microseconds, and Android host arrival clock. This
+does not contain DTS; a PC Codec may assert DTS=PTS only after independently
+qualifying a Baseline/no-reorder stream. Android and the remote PC do not
+share a universal monotonic clock, and neither H264 PTS nor frame arrival
+proves a tap caused a particular compositor frame.
+
+Only real **Annex-B start-code-prefixed** output is admitted, with strict
+finite queue credit. MediaCodec `csd-0`/`csd-1` and
+`BUFFER_FLAG_CODEC_CONFIG` are carried as explicit config packets, including
+when config arrived before display binding. Pre-bound picture pixels are
+rejected (not assigned a guessed display). Repeated output-format change
+needs a new capture/stream. Zero-byte terminal EOS is no longer omitted;
+nonempty EOS output consumes **two** credits, one for the access unit and
+one for a separate empty EOS row. `signalEndOfInput()` requests graceful
+EOS. Overflow, unsupported bitstream format, partial stream and Codec
+errors fail explicitly; packet loss is not silently hidden.
+
+The `AuthorizedH264DisplayCreator` profile also checks that a decoded
+I420 frame fits TurboMedia CPU FrameStore's 8 MiB bound before creating
+any device display. If an Android encoder ignores the requested profile,
+the [TurboMedia H264 Codec Provider in Draft PR #276](https://github.com/qigao/turbomedia/pull/276)
+must reject its actual SPS. A qualified **transport/framing + authenticated
+session handshake** is still required to move these copied packets into the
+remote PC StreamGraph Source; a `FrameRef` cannot cross processes as pixel
+memory, nor does this AAR claim that Android real-device MediaCodec behavior
+has been tested. See [M17 Issue #275](https://github.com/qigao/turbomedia/issues/275).
+No emulator/physical-device, installer, consumer or probe CI is added.
+
 ## Security and functional limits
 
 1. `AuthenticatedDisplayShell` has no default allow-all authority and rejects unknown Binder caller UIDs. Its construction requires shell UID 2000, but the **Mika-derived nonce/certificate-pinned ContentProvider handoff has been implemented in source**. Its actual Binder delivery still requires an embedding App's authorized ADB transport and has not been exercised on a phone.
