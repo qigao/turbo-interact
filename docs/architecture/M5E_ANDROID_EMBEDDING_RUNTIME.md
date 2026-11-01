@@ -55,7 +55,7 @@ It is **not** a new App/installer/consumer project and not a device CI plan.
    cancelled, transport-only or UNKNOWN input never passes this gate.
 7. To qualify **the actual packaged worker**, build the reviewed typed
    command with `TrustedSandboxCommand.forSandboxAction(action, callId,
-   taskId, sandboxRunId)` (origin SANDBOX or SCRIPT), then on an App IO
+   taskId, sandboxRunId)` (origin **SANDBOX only**), then on an App IO
    thread call `TrustedSandboxCommandRunner(app, owner).run(command)`.
    The caller uses the **same** canonical owner. The runner launches only
    the packaged ABI-specific reviewed worker, delivers socket/token via
