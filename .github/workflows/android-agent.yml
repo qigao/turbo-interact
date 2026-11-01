@@ -1,0 +1,44 @@
+name: Android device library
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-agent.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-agent.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: android-library-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  android-library:
+    name: Assemble and unit-test Android device library
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 21 (SimpleDSL plugin runtime)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+      - name: Install Android compile platform
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Set up Gradle 9.1.0
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+      - name: Compile production library and run JVM unit tests via SimpleDSL
+        working-directory: android
+        run: gradle --no-daemon --stacktrace :agent:assembleDebug :agent:testDebugUnitTest
