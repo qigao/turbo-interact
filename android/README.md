@@ -110,6 +110,23 @@ for the actual host/ADB/Binder/worker/frame integration steps and independent
 device acceptance. No test APK, physical-device/emulator CI, or consumer project
 was introduced.
 
+## Single-owner embedding App session
+
+`EmbeddedAndroidHostSession.open` composes an existing authorized ADB
+transport, user-supplied live host policies, one authenticated Shell
+Binder, the owned RGBA VirtualDisplay and the **same** native C11 ActionOwner.
+Its `launchTarget`, `observeInput`, and `runTrustedSandboxAction`
+operations use exactly this session and don't automatically pair ADB,
+choose an App or claim compositor verification. `tryClose()` returns
+false while active calls or native callbacks remain; once drained it
+revokes the host, releases the display, closes the capture and the
+transport lease. The `teardownReport` retains whether exact display
+release was acknowledged. Malformed `createDisplay` replies revoke the
+entire authenticated shell instead of releasing an untrusted ID.
+
+For the exact ordered product integration and unverified device gates
+see [M5e](../docs/architecture/M5E_ANDROID_EMBEDDING_RUNTIME.md).
+
 ## Restricted shell handoff (implemented in source, device-unqualified)
 
 The Android library now includes a **host App entry** and **shell app_process entry**; this is not a separate APK or a replacement for the C11 Action Owner:

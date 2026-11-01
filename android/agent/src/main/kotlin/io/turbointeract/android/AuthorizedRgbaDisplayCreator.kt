@@ -51,8 +51,17 @@ object AuthorizedRgbaDisplayCreator {
             "rotated display requires a separately created capture incarnation"
         }
         val shell = connection.shell
-        val reply = shell.createDisplay(capture.surface,
-            geometry.width, geometry.height, geometry.densityDpi)
+        val reply = try {
+            shell.createDisplay(capture.surface,
+                geometry.width, geometry.height, geometry.densityDpi)
+        } catch (failure: Throwable) {
+            // The remote process might already have created a display before
+            // its Binder reply failed. Revoke the WHOLE authenticated session
+            // to release its owned resources; never guess a display ID.
+            try { connection.close() }
+            catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+            throw failure
+        }
         val displayId = reply.getInt("displayId", 0)
         val displayGeneration = reply.getLong("displayGeneration", 0L)
         val ref = OwnedDisplayReply.accept(
@@ -63,12 +72,17 @@ object AuthorizedRgbaDisplayCreator {
             displayId, displayGeneration, reply.getLong("geometryGeneration", 0L),
         )
         if (ref == null) {
-            // A nonzero returned incarnation may have been created before an
-            // invalid/partial reply. Release only that exact returned tuple.
-            if (displayId > 0 && displayGeneration > 0) {
-                runCatching { shell.releaseDisplay(displayId, displayGeneration) }
-            }
-            error("authenticated Shell returned an invalid display incarnation")
+            // Invalid/partial replies cannot establish ownership, including
+            // a returned display ID which could refer to some OTHER live
+            // display. Never invoke releaseDisplay on that untrusted pair.
+            // Close the authenticated Shell session instead; it owns the
+            // actual display registry and releases ALL of its resources.
+            val failure = IllegalStateException(
+                "authenticated Shell returned an invalid display incarnation"
+            )
+            try { connection.close() }
+            catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+            throw failure
         }
         val snapshot = DisplaySnapshot(ref, geometry)
         try {

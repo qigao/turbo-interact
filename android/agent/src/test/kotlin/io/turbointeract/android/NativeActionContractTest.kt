@@ -47,6 +47,19 @@ class NativeActionContractTest {
         } catch (_: IllegalArgumentException) { }
     }
 
+    @Test fun nativeFieldsCannotWrapIntoValidOriginOrActionKind() {
+        val fields = NativeInputAction(ref, NativeInputAction.MODEL,
+            NativeInputAction.TAP, 99, 1, 5, 1, 7, 10_000L).values(100L)
+        for (index in listOf(1, 2)) {
+            val good = fields[index]
+            fields[index] = good + 4_294_967_296L
+            assertNull(NativeInputAction.fromNative(fields))
+            fields[index] = good
+        }
+        fields[1] = -1L
+        assertNull(NativeInputAction.fromNative(fields))
+    }
+
     @Test fun backDoesNotRequireScreenshotEvidence() {
         val back = NativeInputAction(ref, NativeInputAction.MODEL, NativeInputAction.BACK,
             81, 1, 0, 0, 3, 500)

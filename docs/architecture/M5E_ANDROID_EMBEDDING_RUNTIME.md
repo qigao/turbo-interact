@@ -77,6 +77,34 @@ It is **not** a new App/installer/consumer project and not a device CI plan.
    Shell death invalidates the session and all action attempts. No replay of
    UNKNOWN; do not silently rebind to reused display IDs.
 
+## Single-owner session facade
+
+The existing host may now use `EmbeddedAndroidHostSession.open(...)` on a
+dedicated IO thread instead of manually composing steps 2–5. It creates
+`CanonicalHostGrants`, performs the authorized ADB/nonce/Binder handoff,
+creates the actual RGBA Surface and VirtualDisplay, creates **one** JNI/C11
+ActionOwner and binds it to the same live grants. It does not launch ADB,
+pair a device, install an APK, or accept arbitrary model shell commands.
+
+The returned `EmbeddedAndroidHostSession` exposes `launchTarget`,
+`observeInput` and `runTrustedSandboxAction` against that owner. The
+embedding host must still explicitly choose the package, supply live
+policy, and verify the input's source frame before invoking it.
+
+Call `tryClose()` on an IO thread. It first revokes input and cancels
+the worker, then refuses a premature native destroy while any host call
+or JNI callback remains outstanding; retry `tryClose` after calls drain.
+Only after native destruction does it release the exact owned display,
+close the authenticated connection, and dispose of the ImageReader
+Surface. `teardownReport` distinguishes whether `releaseDisplay` returned
+true, and whether the transport close returned normally. Neither
+proves a remote Android compositor released a display if the Binder died.
+
+If `createDisplay` fails or returns a wrong session/generation, the
+library closes the authenticated Shell session, which owns all displays.
+It must **not** release the guessed ID/generation from a malformed reply,
+which could otherwise destroy a different valid display.
+
 ## Source and product gates
 
 | Gate | Product source/CI | Runtime host acceptance still needed |

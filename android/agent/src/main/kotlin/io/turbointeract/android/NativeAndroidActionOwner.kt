@@ -48,6 +48,8 @@ data class NativeInputAction(
         /** The only versioned request format accepted by the JNI adapter. */
         fun fromNative(values: LongArray): NativeInputAction? = try {
             if (values.size != 17 || values[0] != 1L ||
+                values[1] !in MODEL.toLong()..SCRIPT.toLong() ||
+                (values[2] != TAP.toLong() && values[2] != BACK.toLong()) ||
                 values[9] <= 0L || values[9] > Int.MAX_VALUE ||
                 values[14] !in 0..1_000_000L || values[15] !in 0..1_000_000L) null
             else NativeInputAction(
