@@ -10,6 +10,7 @@ import android.graphics.Canvas
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.media.ImageReader
+import android.os.Looper
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -118,6 +119,54 @@ class AndroidRgbaCapture(val width: Int, val height: Int, private val minInterva
     fun latestFrame(): Frame? = synchronized(monitor) {
         if (closed) null else latest?.let {
             Frame(it.bitmap.copy(Bitmap.Config.ARGB_8888, false), it.sequence, it.capturedAtNs, it.stamp)
+        }
+    }
+
+    /**
+     * Wait for a copied sample from the EXACT same capture/display incarnation
+     * to arrive after an input dispatch returns. Must be called on a host IO
+     * thread, never the Android UI or a reverse-Binder callback thread.
+     *
+     * This is a bounded observation, not an Android compositor fence: a frame
+     * queued before input might only be delivered after the Binder returns.
+     * The caller still needs a task-specific UI postcondition; no replay.
+     */
+    fun awaitFrameAfter(
+        before: CaptureFrameStamp,
+        dispatchReturnedAtNs: Long,
+        timeoutMs: Long = 3_000L,
+    ): Frame? {
+        require(timeoutMs in 1L..15_000L)
+        require(dispatchReturnedAtNs >= before.receivedAtNs)
+        check(Looper.myLooper() != Looper.getMainLooper()) {
+            "capture wait cannot block the Android main thread"
+        }
+        synchronized(monitor) {
+            check(!closed && boundDisplay == before.display &&
+                captureSessionId == before.captureSessionId) {
+                "source capture incarnation is closed or replaced"
+            }
+        }
+        val startedMs = SystemClock.elapsedRealtime()
+        while (true) {
+            val fresh = synchronized(monitor) {
+                if (closed || boundDisplay != before.display ||
+                    captureSessionId != before.captureSessionId) return null
+                latest?.takeIf { sample ->
+                    val stamp = sample.stamp
+                    stamp != null && stamp.display == before.display &&
+                        stamp.captureSessionId == before.captureSessionId &&
+                        stamp.sequence > before.sequence &&
+                        stamp.receivedAtNs > dispatchReturnedAtNs
+                }?.let { sample ->
+                    Frame(sample.bitmap.copy(Bitmap.Config.ARGB_8888, false),
+                        sample.sequence, sample.capturedAtNs, sample.stamp)
+                }
+            }
+            if (fresh != null) return fresh
+            val elapsedMs = SystemClock.elapsedRealtime() - startedMs
+            if (elapsedMs < 0 || elapsedMs >= timeoutMs) return null
+            Thread.sleep((timeoutMs - elapsedMs).coerceAtMost(20L))
         }
     }
 
