@@ -62,6 +62,21 @@ class PostActionFrameEvidenceTest {
         }
     }
 
+    @Test fun sourceFrameMustBelongToExactLiveImageReaderBeforeInput() {
+        assertEquals(true, CaptureSourceLineageGate.matches(
+            ref, "capture-session-a", 6L, before))
+        assertEquals(true, CaptureSourceLineageGate.matches(
+            ref, "capture-session-a", 8L, before))
+        assertEquals(false, CaptureSourceLineageGate.matches(
+            ref, "capture-session-other", 8L, before))
+        assertEquals(false, CaptureSourceLineageGate.matches(
+            ref.copy(displayGeneration = 3L), "capture-session-a", 8L, before))
+        assertEquals(false, CaptureSourceLineageGate.matches(
+            ref, "capture-session-a", 5L, before))
+        assertEquals(false, CaptureSourceLineageGate.matches(
+            null, "capture-session-a", 6L, before))
+    }
+
     @Test fun inputMustReferenceTheExactPreActionFrameAndClock() {
         val wrongActions = listOf(
             action.copy(display = ref.copy(geometryGeneration = 6L)),

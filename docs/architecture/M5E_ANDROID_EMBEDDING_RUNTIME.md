@@ -89,7 +89,10 @@ pair a device, install an APK, or accept arbitrary model shell commands.
 The returned `EmbeddedAndroidHostSession` exposes `launchTarget`,
 `observeInput` and `runTrustedSandboxAction` against that owner. The
 embedding host must still explicitly choose the package, supply live
-policy, and verify the input's source frame before invoking it.
+policy, and verify the input's source frame before invoking it. A live
+ImageReader capture session and its own sequence must match **before**
+a C11/Binder input is sent; numeric DisplayRef/sequence alone are not proof
+of source-frame provenance.
 
 Call `tryClose()` on an IO thread. It first revokes input and cancels
 the worker, then refuses a premature native destroy while any host call

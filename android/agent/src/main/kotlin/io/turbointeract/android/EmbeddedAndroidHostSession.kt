@@ -111,6 +111,9 @@ class EmbeddedAndroidHostSession private constructor(
             "native Binder input and frame collection require a host IO thread"
         }
         val stamp = before.stamp ?: error("unbound source capture")
+        require(capture.ownsSource(stamp)) {
+            "source frame was not produced by this live capture instance"
+        }
         require(stamp.display == snapshot.ref &&
             action.display == snapshot.ref &&
             action.captureSequence == stamp.sequence &&

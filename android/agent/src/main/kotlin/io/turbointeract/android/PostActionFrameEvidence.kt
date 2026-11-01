@@ -20,6 +20,18 @@ data class CaptureFrameStamp(
 }
 
 /**
+ * Input-admission lineage check: source evidence must originate in the
+ * current ImageReader. This is not a privilege credential or compositor fence.
+ */
+internal object CaptureSourceLineageGate {
+    fun matches(currentDisplay: DisplayRef?, captureSessionId: String,
+                latestSequence: Long, source: CaptureFrameStamp): Boolean =
+        currentDisplay == source.display &&
+        captureSessionId == source.captureSessionId &&
+        latestSequence >= source.sequence && latestSequence > 0L
+}
+
+/**
  * No VERIFIED state intentionally exists: neither a successful input Binder
  * result nor a later ImageReader callback proves compositor causal order, or
  * that the target app achieved the requested UI postcondition.

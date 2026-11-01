@@ -70,6 +70,12 @@ class AndroidRgbaCapture(val width: Int, val height: Int, private val minInterva
         }
     }
 
+    /** Reject a foreign ImageReader source before native/Binder input. */
+    internal fun ownsSource(stamp: CaptureFrameStamp): Boolean = synchronized(monitor) {
+        !closed && CaptureSourceLineageGate.matches(
+            boundDisplay, captureSessionId, sequence, stamp)
+    }
+
     init {
         reader.setOnImageAvailableListener({ schedule() }, handler)
     }

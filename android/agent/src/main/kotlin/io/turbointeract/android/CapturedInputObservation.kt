@@ -61,6 +61,9 @@ object CapturedInputObservationRunner {
         visualPostcondition: (Bitmap) -> Boolean,
     ): CapturedInputObservation {
         require(waitForNewFrameMs in 1L..15_000L)
+        require(capture.ownsSource(before)) {
+            "input source frame belongs to a foreign or closed ImageReader"
+        }
         val barrier = owner.submitWithFrameBarrier(action, before)
         val receipt = barrier.receipt
         // No waiting for input which was not conclusively backend-terminal.
