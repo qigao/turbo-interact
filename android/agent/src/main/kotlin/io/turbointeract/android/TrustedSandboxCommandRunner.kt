@@ -147,6 +147,11 @@ class TrustedSandboxCommandRunner(
         TrustedSandboxLaunchPolicy.validate(command)
         check(!cancelled.get()) { "sandbox task already cancelled" }
         val executable = TrustedSandboxLaunchPolicy.trustedExecutable(context, command)
+        val onOwnerTerminated: () -> Unit = { cancel() }
+        check(owner.registerSandboxCancellation(onOwnerTerminated)) {
+            "native ActionOwner is revoked or a sandbox command is already running"
+        }
+        try {
         val credentials = owner.openSandbox(
             context.filesDir, command.taskId, command.sandboxRunId, command.allowedTools
         )
@@ -219,5 +224,8 @@ class TrustedSandboxCommandRunner(
         }
         val output = (collector?.finish() ?: "").replace(credentials.tokenHex, "[redacted]")
         return SandboxProcessReceipt(outcome, exitCode, accepted, rejected, output)
+        } finally {
+            owner.unregisterSandboxCancellation(onOwnerTerminated)
+        }
     }
 }

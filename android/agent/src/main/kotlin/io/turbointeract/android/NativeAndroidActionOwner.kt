@@ -139,6 +139,38 @@ class NativeSandboxCredentials(val socketPath: String, val tokenHex: String) {
     override fun toString() = "NativeSandboxCredentials(<redacted>)"
 }
 
+/**
+ * Task-local cancel hook. Registration/cancel are serialized, but callbacks run
+ * OUTSIDE its monitor to avoid deadlocks during nested Binder/owner teardown.
+ * An already-revoked owner will never accept a new worker registration.
+ */
+internal class SandboxCancellationGate {
+    private val monitor = Any()
+    private var terminated = false
+    private var hook: (() -> Unit)? = null
+
+    fun register(callback: () -> Unit): Boolean = synchronized(monitor) {
+        if (terminated || hook != null) false else {
+            hook = callback
+            true
+        }
+    }
+
+    fun unregister(callback: () -> Unit) = synchronized(monitor) {
+        if (hook === callback) hook = null
+    }
+
+    fun cancel() {
+        val callback = synchronized(monitor) {
+            terminated = true
+            hook.also { hook = null }
+        }
+        try { callback?.invoke() } catch (_: Exception) { /* fail-closed */ }
+    }
+
+    fun terminated(): Boolean = synchronized(monitor) { terminated }
+}
+
 /** Declared in the production AAR's NDK shared target, built from root C11. */
 internal object NativeActionJni {
     init { System.loadLibrary("turbo_interact_android_jni") }
@@ -182,6 +214,13 @@ class NativeAndroidActionOwner private constructor(
     private var handle: Long = nativeHandle
     private var borrowers = 0
     private var closing = false
+    private val sandboxCancellation = SandboxCancellationGate()
+
+    internal fun registerSandboxCancellation(callback: () -> Unit): Boolean =
+        sandboxCancellation.register(callback)
+
+    internal fun unregisterSandboxCancellation(callback: () -> Unit) =
+        sandboxCancellation.unregister(callback)
 
     private fun pin(allowClosing: Boolean = false): Long = synchronized(monitor) {
         if (handle == 0L || (closing && !allowClosing)) 0L
@@ -227,6 +266,7 @@ class NativeAndroidActionOwner private constructor(
 
     /** May be called even during Binder dispatch; no hardware effect is replayed. */
     fun revoke(): Boolean {
+        sandboxCancellation.cancel()
         val h = pin(allowClosing = true)
         if (h == 0L) return false
         return try { NativeActionJni.revoke(h) == 0 }
@@ -300,12 +340,15 @@ class NativeAndroidActionOwner private constructor(
     }
 
     /** False means BUSY: caller must retry after all in-flight callbacks settle. */
-    fun tryClose(): Boolean = synchronized(monitor) {
-        closing = true
-        if (handle == 0L) return true
-        if (borrowers != 0) return false
-        val status = NativeActionJni.destroy(handle)
-        if (status == 0) { handle = 0L; true } else false
+    fun tryClose(): Boolean {
+        sandboxCancellation.cancel()
+        return synchronized(monitor) {
+            closing = true
+            if (handle == 0L) return@synchronized true
+            if (borrowers != 0) return@synchronized false
+            val status = NativeActionJni.destroy(handle)
+            if (status == 0) { handle = 0L; true } else false
+        }
     }
 
     override fun close() {
