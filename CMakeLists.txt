@@ -34,6 +34,16 @@ if(UNIX OR ANDROID)
     C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
   target_compile_options(turbo_interact_sandbox_worker PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
+  if(ANDROID)
+    # Deterministic, ABI-scoped PRODUCT executable path for the single AAR
+    # packaging pipeline. AGP normally omits add_executable outputs.
+    if(NOT ANDROID_ABI OR NOT CMAKE_BUILD_TYPE)
+      message(FATAL_ERROR "Android sandbox worker requires ABI and build type")
+    endif()
+    set_target_properties(turbo_interact_sandbox_worker PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY
+        "${CMAKE_CURRENT_SOURCE_DIR}/android/agent/build/trustedWorkerBinaries/${CMAKE_BUILD_TYPE}/${ANDROID_ABI}")
+  endif()
 endif()
 
 # Android JNI is part of the production Android AAR, linked to the same
