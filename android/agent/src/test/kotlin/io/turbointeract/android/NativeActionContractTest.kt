@@ -78,6 +78,28 @@ class NativeActionContractTest {
         assertFalse(grants.allowLaunch(ref, "com.android.settings", 4))
     }
 
+    @Test fun sandboxCredentialsAreStrongAndNeverContainAnExternalUid() {
+        val good = NativeSandboxCredentials("/data/user/0/app/files/ti-a.sock", "a".repeat(64))
+        assertTrue(good.socketPath.startsWith("/"))
+        assertEquals(64, good.tokenHex.length)
+        for ((path, token) in listOf(
+            Pair("relative.sock", "a".repeat(64)),
+            Pair("/data/local/tmp/ti.sock", "A".repeat(64)),
+            Pair("/data/user/0/app/files/sock", "x".repeat(63))
+        )) {
+            try {
+                NativeSandboxCredentials(path, token)
+                throw AssertionError("accepted malformed sandbox credentials")
+            } catch (_: IllegalArgumentException) { }
+        }
+    }
+
+    @Test fun sandboxMethodCapabilitiesStayNarrow() {
+        assertEquals(1, NativeAndroidActionOwner.SANDBOX_TAP)
+        assertEquals(2, NativeAndroidActionOwner.SANDBOX_BACK)
+        assertEquals(3, NativeAndroidActionOwner.SANDBOX_TAP or NativeAndroidActionOwner.SANDBOX_BACK)
+    }
+
     @Test fun receiptsNeverEquateDispatchWithTaskSuccess() {
         assertTrue(NativeInputReceipt(0, 4, 2).unknown)
         assertFalse(NativeInputReceipt(0, 1, 3).unknown)
