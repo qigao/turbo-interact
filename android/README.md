@@ -83,6 +83,33 @@ See [M5c JNI contract](../docs/architecture/M5C_ANDROID_JNI.md),
 [Draft PR #21](https://github.com/qigao/turbo-interact/pull/21) and
 [Issue #19](https://github.com/qigao/turbo-interact/issues/19).
 
+## M5d installed-host and post-input evidence contracts
+
+The **final installed embedding APK**, not the AAR alone, must extract the
+approved native worker to its read-only executable
+`ApplicationInfo.nativeLibraryDir`. In the existing host App's AGP packaging
+configuration set `packaging.jniLibs.useLegacyPackaging = true` and inspect
+`TrustedSandboxWorkerInstallation.inspect(applicationContext)` before
+launching a `TrustedSandboxCommandRunner` from a dedicated IO thread.
+`READY_FOR_EXEC_ATTEMPT` is a local preflight, not proof of real `execve`.
+Missing native extraction, wrong path, writable or nonexecutable worker all
+fail closed; do **not** copy any executable into `filesDir`.
+
+For image evidence, bind the actual returned `DisplaySnapshot` to the
+`AndroidRgbaCapture` once after display creation. A frame's
+`stamp` is tied to the display incarnation, capture session and sequence.
+`NativeAndroidActionOwner.submitWithFrameBarrier` anchors an input to that
+pre-action stamp and returns a conservative post-input gate.
+`FRAME_OBSERVED_CAUSALITY_UNPROVEN` means only that a later capture sample
+was observed; it is **not** a compositor ordering proof or task verification.
+`UNKNOWN` inputs, stale geometry, display-ID reuse, missing stamps and
+capture replacement cannot produce stronger evidence.
+
+See [M5d host APK runtime acceptance](../docs/architecture/M5D_HOST_APK_RUNTIME_ACCEPTANCE.md)
+for the actual host/ADB/Binder/worker/frame integration steps and independent
+device acceptance. No test APK, physical-device/emulator CI, or consumer project
+was introduced.
+
 ## Restricted shell handoff (implemented in source, device-unqualified)
 
 The Android library now includes a **host App entry** and **shell app_process entry**; this is not a separate APK or a replacement for the C11 Action Owner:
