@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: native-contracts-\${{ github.event.pull_request.number || github.ref }}
+  group: native-contracts-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -31,8 +31,8 @@ permissions:
 
 jobs:
   native:
-    name: \${{ matrix.os }} real C11 product build
-    runs-on: \${{ matrix.os }}
+    name: ${{ matrix.os }} real C11 product build
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -51,7 +51,7 @@ jobs:
       - name: Configure native product with Clang
         shell: bash
         env:
-          LLVM_MINGW_TOOLCHAIN: \${{ steps.llvm-mingw.outputs.toolchain-file }}
+          LLVM_MINGW_TOOLCHAIN: ${{ steps.llvm-mingw.outputs.toolchain-file }}
         run: |
           set -euo pipefail
           if [[ "$RUNNER_OS" == "Windows" ]]; then
