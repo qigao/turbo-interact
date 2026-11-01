@@ -1,6 +1,7 @@
 package io.turbointeract.android
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.os.SystemClock
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -37,6 +38,50 @@ data class SandboxProcessReceipt(
     val rejectedCalls: Int,
     val output: String,
 )
+
+/**
+ * This checks the INSTALLED HOST APK, not merely AAR ZIP contents. READY only
+ * allows a real execve attempt: it does not claim the OS actually started the
+ * worker. Host APK must opt into extracted jniLibs (AGP useLegacyPackaging).
+ */
+enum class TrustedWorkerInstallStatus {
+    APK_DOES_NOT_EXTRACT_NATIVE_LIBS,
+    NO_NATIVE_LIBRARY_DIRECTORY,
+    WORKER_NOT_INSTALLED,
+    WORKER_NOT_IMMUTABLE_EXECUTABLE,
+    READY_FOR_EXEC_ATTEMPT,
+}
+
+object TrustedSandboxWorkerInstallation {
+    fun inspect(context: Context): TrustedWorkerInstallStatus =
+        inspect(context.applicationInfo.flags, context.applicationInfo.nativeLibraryDir)
+
+    /** Pure install-policy and filesystem gate, exercised in existing JVM tests. */
+    internal fun inspect(flags: Int, nativeLibraryDir: String?): TrustedWorkerInstallStatus {
+        if (flags and ApplicationInfo.FLAG_EXTRACT_NATIVE_LIBS == 0) {
+            return TrustedWorkerInstallStatus.APK_DOES_NOT_EXTRACT_NATIVE_LIBS
+        }
+        if (nativeLibraryDir.isNullOrBlank()) {
+            return TrustedWorkerInstallStatus.NO_NATIVE_LIBRARY_DIRECTORY
+        }
+        val root = try { File(nativeLibraryDir).canonicalFile }
+                   catch (_: IOException) { return TrustedWorkerInstallStatus.NO_NATIVE_LIBRARY_DIRECTORY }
+        if (!root.isDirectory) return TrustedWorkerInstallStatus.NO_NATIVE_LIBRARY_DIRECTORY
+        val candidate = try {
+            File(root, TrustedSandboxLaunchPolicy.WORKER_LIBRARY_NAME).canonicalFile
+        } catch (_: IOException) {
+            return TrustedWorkerInstallStatus.WORKER_NOT_IMMUTABLE_EXECUTABLE
+        }
+        if (candidate.parentFile != root) {
+            return TrustedWorkerInstallStatus.WORKER_NOT_IMMUTABLE_EXECUTABLE
+        }
+        if (!candidate.isFile) return TrustedWorkerInstallStatus.WORKER_NOT_INSTALLED
+        if (!candidate.canExecute() || candidate.canWrite()) {
+            return TrustedWorkerInstallStatus.WORKER_NOT_IMMUTABLE_EXECUTABLE
+        }
+        return TrustedWorkerInstallStatus.READY_FOR_EXEC_ATTEMPT
+    }
+}
 
 /** Pure host policy, also covered by the Android AAR's JVM tests. */
 internal object TrustedSandboxLaunchPolicy {
@@ -83,12 +128,14 @@ internal object TrustedSandboxLaunchPolicy {
 
     fun trustedExecutable(context: Context, command: TrustedSandboxCommand): File {
         validate(command)
-        val root = File(context.applicationInfo.nativeLibraryDir).canonicalFile
-        val target = File(root, command.nativeLibraryName).canonicalFile
-        check(target.parentFile == root && target.isFile && target.canExecute() && !target.canWrite()) {
-            "sandbox runner must be a packaged immutable executable native library"
+        val status = TrustedSandboxWorkerInstallation.inspect(context)
+        check(status == TrustedWorkerInstallStatus.READY_FOR_EXEC_ATTEMPT) {
+            "installed host APK cannot execute packaged worker: " + status
         }
-        return target
+        // Installed nativeLibraryDir is OS-managed; never copy this executable
+        // into App filesDir/cacheDir (Android 10+ W^X).
+        val root = File(context.applicationInfo.nativeLibraryDir).canonicalFile
+        return File(root, command.nativeLibraryName).canonicalFile
     }
 }
 
