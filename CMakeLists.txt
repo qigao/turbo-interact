@@ -17,11 +17,8 @@ set_target_properties(turbo_interact_core PROPERTIES
 target_include_directories(turbo_interact_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-if(MSVC)
-  target_compile_options(turbo_interact_core PRIVATE /W4 /WX)
-else()
-  target_compile_options(turbo_interact_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
-endif()
+# Product C11 builds use Clang/LLVM; MSVC/GCC are not release toolchains.
+target_compile_options(turbo_interact_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 install(TARGETS turbo_interact_core EXPORT TurboInteractTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
