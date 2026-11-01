@@ -4,6 +4,53 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Looper
 
+/** A local call-borrow fence, NOT an alternative C11 input authority. */
+internal enum class HostCloseAdmission { ALREADY_TERMINATED, OTHER_CLOSE_ACTIVE, ATTEMPT }
+
+/**
+ * Makes first-close terminal for new calls while allowing a later close retry
+ * after already-borrowed host/worker calls finish. No Binder/JNI or callbacks
+ * may run under this monitor. Tests exercise this exact product state gate.
+ */
+internal class EmbeddedHostCallGate {
+    private val monitor = Any()
+    private var active = 0
+    private var closing = false
+    private var attempt = false
+    private var terminated = false
+
+    fun borrow(): Boolean = synchronized(monitor) {
+        if (closing || terminated) false else { active++; true }
+    }
+
+    fun release() = synchronized(monitor) {
+        check(active > 0) { "host lifecycle borrow underflow" }
+        active--
+    }
+
+    fun startClose(): HostCloseAdmission = synchronized(monitor) {
+        when {
+            terminated -> HostCloseAdmission.ALREADY_TERMINATED
+            attempt -> HostCloseAdmission.OTHER_CLOSE_ACTIVE
+            else -> {
+                closing = true
+                attempt = true
+                HostCloseAdmission.ATTEMPT
+            }
+        }
+    }
+
+    fun idle(): Boolean = synchronized(monitor) { active == 0 }
+
+    fun finishClose(completed: Boolean) = synchronized(monitor) {
+        check(attempt) { "no active host teardown" }
+        if (completed) terminated = true
+        attempt = false
+        // closing deliberately remains true after BUSY/error, so the native
+        // borrower can finish but no new host calls can sneak into a retry.
+    }
+}
+
 /**
  * Local teardown observations, not Android system process/compositor proof.
  * A false acknowledgement means the remote Shell may already have died;
@@ -29,27 +76,15 @@ class EmbeddedAndroidHostSession private constructor(
     val capture: AndroidRgbaCapture,
     val actionOwner: NativeAndroidActionOwner,
 ) : AutoCloseable {
-    private val monitor = Any()
-    private var activeCalls = 0
-    private var closing = false
-    private var terminated = false
-    private var closeAttemptRunning = false
+    private val calls = EmbeddedHostCallGate()
 
     @Volatile
     var teardownReport: EmbeddedHostTeardownReport? = null
         private set
 
     private inline fun <T> borrowed(block: () -> T): T {
-        synchronized(monitor) {
-            check(!closing && !terminated) { "embedded host session revoked or closing" }
-            activeCalls++
-        }
-        return try { block() } finally {
-            synchronized(monitor) {
-                activeCalls--
-                check(activeCalls >= 0) { "host session borrow underflow" }
-            }
-        }
+        check(calls.borrow()) { "embedded host session revoked or closing" }
+        return try { block() } finally { calls.release() }
     }
 
     /** Shell launch status is NOT proof that the target App is visible. */
@@ -119,15 +154,15 @@ class EmbeddedAndroidHostSession private constructor(
         check(Looper.myLooper() != Looper.getMainLooper()) {
             "host session teardown requires a host IO thread"
         }
-        synchronized(monitor) {
-            if (terminated) return true
-            if (closeAttemptRunning) return false
-            closing = true
-            closeAttemptRunning = true
+        when (calls.startClose()) {
+            HostCloseAdmission.ALREADY_TERMINATED -> return true
+            HostCloseAdmission.OTHER_CLOSE_ACTIVE -> return false
+            HostCloseAdmission.ATTEMPT -> Unit
         }
+        var completed = false
         try {
             actionOwner.revoke() // Cancels a direct worker without monitor held.
-            synchronized(monitor) { if (activeCalls != 0) return false }
+            if (!calls.idle()) return false
             if (!actionOwner.tryClose()) return false
 
             val ref = snapshot.ref
@@ -139,10 +174,10 @@ class EmbeddedAndroidHostSession private constructor(
             val transportClosed = runCatching { connection.close() }.isSuccess
             runCatching { capture.close() }
             teardownReport = EmbeddedHostTeardownReport(released, transportClosed)
-            synchronized(monitor) { terminated = true }
+            completed = true
             return true
         } finally {
-            synchronized(monitor) { closeAttemptRunning = false }
+            calls.finishClose(completed)
         }
     }
 
