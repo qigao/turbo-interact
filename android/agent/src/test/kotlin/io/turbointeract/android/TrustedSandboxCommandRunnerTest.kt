@@ -74,6 +74,28 @@ class TrustedSandboxCommandRunnerTest {
         }
     }
 
+    @Test fun typedWorkerArgsKeepOneCanonicalDisplayAndActionIdentity() {
+        val ref = DisplayRef(41, 2, 7, 5, 3)
+        val tap = NativeInputAction(ref, NativeInputAction.SANDBOX,
+            NativeInputAction.TAP, 12, 9, 15, 21, 7, 123_456_789,
+            500_000, 250_000)
+        val cmd = TrustedSandboxCommand.forSandboxAction(tap, 30, 14, 1)
+        assertEquals(1, cmd.allowedTools)
+        assertEquals(listOf("tap", "30", "12", "9", "15", "21", "5", "3",
+            "123456789", "500000", "250000"), cmd.arguments)
+        val back = tap.copy(kind = NativeInputAction.BACK, evidenceId = 0,
+            captureSequence = 0, xNormalized = 0, yNormalized = 0)
+        val backCmd = TrustedSandboxCommand.forSandboxAction(back, 31, 14, 1)
+        assertEquals(2, backCmd.allowedTools)
+        assertEquals(listOf("back", "31", "12", "9", "0", "0", "5", "3",
+            "123456789"), backCmd.arguments)
+        try {
+            TrustedSandboxCommand.forSandboxAction(
+                tap.copy(origin = NativeInputAction.MODEL), 30, 14, 1)
+            throw AssertionError("model command improperly handed to sandbox worker")
+        } catch (_: IllegalArgumentException) { }
+    }
+
     @Test fun auditedOneShotTapSchema() {
         val command = spec().copy(arguments = listOf(
             "tap", "1", "22", "1", "10", "3", "5", "1",
